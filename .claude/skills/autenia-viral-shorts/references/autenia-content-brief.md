@@ -1,0 +1,180 @@
+# Brief de contenido — Autenia
+
+Fuente: https://auteniaai.com/ (consultada 2026-07-29) + decisiones de producto de
+la skill.
+
+> **Pendiente de confirmar por el usuario** — marcado con ⚠️ a lo largo del
+> documento. Hasta que confirme, usa el valor propuesto pero decláralo como
+> supuesto en el resumen final.
+
+---
+
+## 1. Qué es Autenia
+
+Consultora de ingeniería de IA y automatización, remota, desde España. Fundada por
+Juan Juzgado Soler (formación en Data Engineering & IA). Posicionamiento explícito:
+**"experiencia real, no hype"** — alternativa técnica y transparente frente a
+soluciones de plantilla.
+
+Eslogan: *"Automatiza todo. Trabaja con la máxima eficiencia."*
+
+### Servicios
+
+| # | Servicio | Contenido |
+|---|---|---|
+| 1 | **Agentes IA** | Atención 24/7, captación de leads, respuestas sobre documentación propia. Por WhatsApp, web o teléfono |
+| 2 | **Automatización y BI** | Informes automáticos, cuadros de mando en tiempo real, pipelines de datos, alertas |
+| 3 | **Software a medida con IA** | Apps, portales y CRMs con IA integrada |
+| 4 | **Auditoría y formación IA** | Diagnóstico de procesos, hoja de ruta de implantación, formación de equipos |
+
+⚠️ **Servicio prioritario para empujar primero:** sin confirmar. Propuesta por
+defecto: **Agentes IA**, por ser el de demostración visual más inmediata (una
+conversación de WhatsApp resolviendo algo se entiende en 3 segundos) y el de ciclo
+de venta más corto.
+
+---
+
+## 2. Público
+
+**Primario:** pymes y medianas empresas españolas, y autónomos con volumen.
+**Sectores destacados en la web:** e-commerce, inmobiliaria, ingeniería, finanzas y
+servicios profesionales.
+
+**Quién decide:** gerente, fundador o responsable de operaciones. No es un público
+técnico. No habla de "RAG", "embeddings" ni "agentes multi-paso"; habla de "me como
+las horas contestando lo mismo", "no sé qué stock tengo", "los informes los hago a
+mano cada lunes".
+
+**Implicación editorial:** el vídeo nunca explica cómo funciona la tecnología.
+Muestra un trabajo manual que desaparece.
+
+---
+
+## 3. Conversión
+
+**Primaria:** cuestionario breve de un minuto en auteniaai.com + mensajes directos
+cualificados.
+**Secundarias (señales, no objetivos):** guardados, compartidos, seguidores,
+comentarios.
+**Contacto:** autenia@proton.me
+
+**CTA por defecto:** dirigir al cuestionario de la web. **Nunca** uses "link in bio"
+como fórmula fija — es el CTA cableado que hay que eliminar del prompt
+(`saasshorts.py:530`). Redacta el CTA según la idea, y que suene a invitación a
+diagnóstico, no a compra.
+
+Ejemplos de tono correcto: *"Si esto te suena, en la web hay un cuestionario de un
+minuto que te dice si es automatizable."* / *"Te digo en un minuto si tu caso tiene
+arreglo."*
+
+---
+
+## 4. Formato
+
+| Parámetro | Valor |
+|---|---|
+| Duración | 25–35s por defecto; 20–45s según idea; máximo interno 55s |
+| Formato | 1080×1920, H.264, AAC, 30 fps |
+| Idioma | Español (España). Solo español por ahora |
+| Modo | **faceless**: capturas, demos, material autorizado, voz y subtítulos |
+| Hook | Visible en el primer segundo; idea central en los tres primeros |
+| Marca | Logo y CTA discretos. Sin marcas de agua de otras plataformas |
+
+**Sin intro corporativa.** Nada de "Hola, somos Autenia y hoy vamos a hablar de...".
+El vídeo abre con el problema o con el resultado.
+
+⚠️ **Material visual disponible:** sin confirmar. El faceless necesita pantalla real
+—capturas de agentes conversando, cuadros de mando, automatizaciones ejecutándose—
+aunque estén anonimizadas. Sin material propio el formato degenera en stock genérico
+y pierde justo lo que diferencia a Autenia. **Pregunta por esto antes de producir.**
+
+---
+
+## 5. Ángulos editoriales que funcionan
+
+Ordenados por encaje con el posicionamiento:
+
+1. **Antes / después de un proceso.** Trabajo manual concreto → mismo trabajo
+   automatizado. El más fuerte: es demostrable y no requiere creer nada.
+2. **Coste oculto de lo manual.** Cuantificar horas o errores de una tarea que la
+   pyme da por inevitable.
+3. **Desmontar hype con criterio.** Qué promete la IA que no cumple, y qué sí. Esto
+   *es* el posicionamiento "experiencia real, no hype" — pero critica ideas, nunca
+   empresas ni personas.
+4. **Micro-demo de producto.** 20 segundos de un agente resolviendo una consulta
+   real, con datos ficticios.
+5. **Aterrizar una novedad del sector.** Solo cuando exista relación demostrable con
+   un servicio de Autenia; si no, se descarta en el filtro editorial.
+
+---
+
+## 6. Exclusiones (duras)
+
+- Política, polémica artificial, ataques a competidores, rumores.
+- Promesas engañosas: cifras de retorno inventadas, "te hago viral", garantías.
+- **Datos de clientes.** Ningún nombre, logo, captura, cifra ni caso identificable
+  sin autorización escrita. Ante la duda, anonimiza o no lo uses.
+- Titulares o vídeos de terceros copiados como sustituto de pieza propia. Parafrasea,
+  atribuye y usa material ajeno solo si el derecho de uso lo permite.
+- Jerga técnica sin traducir a consecuencia de negocio.
+- Contenido que solo entiende otro ingeniero de IA. El público es la pyme.
+
+---
+
+## 7. Voz y tono
+
+Directo, concreto, sin superlativos. Frases cortas. Cifras cuando existan y sean
+reales; nada de inventarlas para dar impacto.
+
+**Sí:** "Esto son cuatro horas al mes que no vuelves a tocar."
+**No:** "Revoluciona tu negocio con el poder transformador de la IA."
+
+Trata al espectador como alguien ocupado y competente que no conoce esta tecnología
+en concreto. Nunca condescendiente, nunca pomposo.
+
+⚠️ **Tuteo vs. usted:** propuesta por defecto **tuteo**, coherente con el registro
+de la web y con el formato vertical. Confirmar.
+
+---
+
+## 8. Costes objetivo
+
+| Modo | Coste marginal/vídeo | Claves necesarias |
+|---|---|---|
+| Clip Generator | ~0 € | Gemini |
+| **faceless** (por defecto) | ~0 € + voz | Gemini, ElevenLabs |
+| `lowcost` avatar | ~$0,65 | Gemini, ElevenLabs, fal.ai |
+| `premium` avatar | ~$2,00 | Gemini, ElevenLabs, fal.ai |
+
+Objetivo a ritmo diario (30 vídeos/mes) en faceless: **por debajo de 10 €/mes**,
+dominado por ElevenLabs. Los avatares se usan solo como experimento consciente, no
+como modo por defecto.
+
+⚠️ **Límite de gasto mensual:** sin confirmar. Propuesta por defecto: **25 €/mes**,
+con parada dura antes de llamar a cualquier proveedor de vídeo si se supera.
+
+---
+
+## 9. Cadencia y publicación
+
+- Objetivo: un vídeo al día. **Calidad antes que rellenar calendario**: es preferible
+  publicar cuatro días buenos que siete mediocres.
+- Un máster 9:16 reutilizable en Instagram Reels, TikTok y YouTube Shorts.
+- Aprobación humana obligatoria antes de toda publicación, sin excepción.
+- ⚠️ **Horario de publicación y zona:** sin confirmar. Base `Europe/Madrid`. No
+  programes nada hasta tener horarios concretos.
+
+---
+
+## 10. Preguntas abiertas para el usuario
+
+Antes de la primera producción real, resuelve:
+
+1. ¿Qué servicio empujamos primero? (por defecto: Agentes IA)
+2. ¿Hay capturas o demos propias utilizables, aunque sean anonimizadas?
+3. ¿Tuteo o usted?
+4. ¿Límite de gasto mensual? (por defecto: 25 €)
+5. ¿Horario y días de publicación?
+6. ¿Cuentas de TikTok / Instagram / YouTube ya creadas y con acceso?
+
+No preguntes nada que ya esté decidido en este documento.

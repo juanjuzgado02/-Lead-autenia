@@ -52,13 +52,15 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 3. **Write** (`autenia/gemini.py`) — a grounded script that keeps facts and
    opinions apart and carries its sources.
 4. **Preflight** (`autenia/preflight.py`) — the last gate before spending:
-   duration, claims, usage rights, estimated cost, cached assets.
+   duration, claims, estimated cost, cached assets.
 5. **Review** (`autenia/telegram.py`) — script, sources and cost to one chat,
    with `Aprobar`, `Pedir cambios`, `Rechazar`, `Regenerar`. Nothing renders
    before a human approves the words.
 6. **Render** (`autenia/render.py`) — narration per segment via
-   `autenia/voice.py`, composed against Autenia's own footage from
-   `autenia/assets.py`, burned captions, 1080×1920 H.264/AAC 30 fps.
+   `autenia/voice.py`, then a background chosen in strict order: Autenia's own
+   footage (`autenia/assets.py`), a generated photograph (`autenia/images.py`),
+   or typography. Stills get a slow push so they do not read as a slideshow.
+   Captions are drawn with Pillow and overlaid. 1080×1920 H.264/AAC 30 fps.
 7. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
    single refusal cannot hide two successes. Dry run by default.
 
@@ -77,16 +79,25 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 | `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default, ElevenLabs opt-in. |
 | `autenia/render.py` | Script → 9:16 master, ffmpeg only. |
 | `autenia/assets.py` | Autenia's own footage library and coverage measurement. |
+| `autenia/images.py` | Generated scene photographs, cached on disk. ~0,03 € each. |
 | `autenia/publish.py` | Upload-Post, per network, dry-run by default. |
 | `autenia/ffmpeg.py` | Encoder selection and −14 LUFS loudness normalisation. |
 | `autenia/urls.py` | SSRF guard for URLs this machine fetches. |
 
 ### Things that will bite
 
-- **`autenia/render.py` falls back to typographic cards** when the library has no
-  matching footage. That is deliberate — an unrelated stock clip, or a mock-up of
-  a product screen that does not exist, would both be worse than honest text. The
-  fix is real footage in `data/library`, never a laxer fallback.
+- **Backgrounds have three tiers and the order is not negotiable**: own
+  footage, then a generated photograph, then type. Generated imagery keeps the
+  short watchable while `data/library` fills up; it is not a substitute for real
+  material, and a scene asking for "una pantalla de Autenia" is answered with the
+  desk around the screen, never with an invented interface.
+- **Never let an image model write text.** Every prompt in `images.py` forbids
+  letters, numbers and logos: generated lettering is gibberish and a viewer spots
+  it instantly. The real words are drawn afterwards by Pillow.
+- **Captions go through Pillow, not `drawtext`.** Two failure modes drove that:
+  the filtergraph parser eats the escaping on Spanish text, so a wrapped
+  caption rendered as "horas ennpapeleo", and `box=1` draws one rectangle per line, so a
+  three-line caption comes out as a staircase.
 - **Search angles point at the problem, not the technology.** If the system
   strings together empty days, review the angles before touching the threshold.
   Lowering the bar is exactly what the brief forbids: a day without a video is a

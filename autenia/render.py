@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from . import assets as asset_lib
 from . import ffmpeg as ff
-from . import voice
+from . import images, voice
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 
@@ -57,7 +57,13 @@ class Segment:
     visual_request: str  # what the script asked to see
     audio_path: str = ""
     duration_s: float = 0.0
-    asset_path: str | None = None
+    asset_path: str | None = None    # Autenia's own footage, always preferred
+    image_path: str | None = None    # generated stand-in when the library is short
+
+    @property
+    def background(self) -> str | None:
+        """What this scene actually shows. Own material wins over generated."""
+        return self.asset_path or self.image_path
 
 
 @dataclass
@@ -158,14 +164,93 @@ def _escape(text: str) -> str:
                 .replace("'", "’").replace("%", "\\%"))
 
 
-def _subtitle_filter(text: str) -> str:
-    """Burned-in caption, inside the safe area, readable over any footage."""
-    wrapped = _escape(_wrap(text, 28)).replace("\n", "\\n")
+#: Caption geometry. The plate is one rounded rectangle behind the whole block.
+CAPTION_SIZE = 56
+CAPTION_PAD = 28
+CAPTION_LEADING = 14
+
+
+def caption_png(text: str, out_path: str) -> tuple[str, int]:
+    """The caption as a transparent PNG, and its height.
+
+    Drawn with Pillow rather than ffmpeg's ``drawtext``, after two rounds of
+    fighting that filter:
+
+    * escaping a Spanish sentence into a filtergraph means fighting three
+      parsers — the caption rendered "horas en\\npapeleo" as "horas ennpapeleo"
+      because the graph parser ate the backslash, and colons, apostrophes and
+      percent signs each break the line their own way;
+    * ``box=1`` draws one rectangle **per line**, so a three-line caption comes
+      out as a staircase of separate bands instead of a plate.
+
+    Pillow measures text, so it can centre lines against each other and put a
+    single rounded plate behind all of them.
+    """
+    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415 (optional dep)
+
+    try:
+        font = ImageFont.truetype(FONT_BODY, CAPTION_SIZE)
+    except OSError:
+        font = ImageFont.load_default()
+
+    lines = _wrap(text, 26).split("\n")
+    ruler = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    widths, heights = [], []
+    for line in lines:
+        box = ruler.textbbox((0, 0), line, font=font)
+        widths.append(box[2] - box[0])
+        heights.append(box[3] - box[1])
+
+    line_h = max(heights) if heights else CAPTION_SIZE
+    text_w = max(widths) if widths else 0
+    block_h = line_h * len(lines) + CAPTION_LEADING * (len(lines) - 1)
+
+    plate_w = min(WIDTH - 60, text_w + CAPTION_PAD * 2)
+    plate_h = block_h + CAPTION_PAD * 2
+
+    image = Image.new("RGBA", (plate_w, plate_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, plate_w - 1, plate_h - 1), radius=18,
+                           fill=(0, 0, 0, 150))
+
+    y = CAPTION_PAD
+    for line, width in zip(lines, widths):
+        draw.text(((plate_w - width) / 2, y), line, font=font, fill=INK,
+                  anchor="la")
+        y += line_h + CAPTION_LEADING
+
+    image.save(out_path)
+    return out_path, plate_h
+
+
+#: How much a still drifts across its scene. Enough to read as alive, little
+#: enough not to look like a screensaver: 8% over four seconds is roughly a
+#: slow push-in on a tripod.
+KEN_BURNS_ZOOM = 0.08
+
+
+def _ken_burns(duration: float, index: int) -> str:
+    """Slow push on a still, alternating direction from scene to scene.
+
+    A photograph held perfectly still for four seconds reads as a slideshow, and
+    a slideshow reads as something nobody bothered to edit. The image is scaled
+    to double size first because zoompan samples the *input* frame: zooming a
+    1080-wide source produces visible stepping as it crosses pixel boundaries.
+
+    Direction alternates so that four scenes in a row do not all creep the same
+    way, which is its own kind of monotony.
+    """
+    frames = max(2, int(round(duration * FPS)))
+    if index % 2 == 0:
+        zoom = f"1+{KEN_BURNS_ZOOM}*on/{frames}"          # push in
+    else:
+        zoom = f"{1 + KEN_BURNS_ZOOM}-{KEN_BURNS_ZOOM}*on/{frames}"   # pull out
     return (
-        f"drawtext=fontfile={FONT_BODY}:text='{wrapped}':"
-        f"fontcolor=white:fontsize=58:line_spacing=12:"
-        f"box=1:boxcolor=black@0.55:boxborderw=24:"
-        f"x=(w-text_w)/2:y=h-{SAFE_BOTTOM}-text_h"
+        f"scale={WIDTH * 2}:{HEIGHT * 2}:force_original_aspect_ratio=increase,"
+        f"crop={WIDTH * 2}:{HEIGHT * 2},"
+        f"zoompan=z='{zoom}':d={frames}:"
+        f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"s={WIDTH}x{HEIGHT}:fps={FPS}"
     )
 
 
@@ -173,33 +258,40 @@ def _segment_clip(segment: Segment, out_path: str, workdir: str, index: int) -> 
     """One segment as a silent video of exactly its narration's length."""
     ffmpeg = _ffmpeg()
     duration = max(0.8, segment.duration_s)
+    background = segment.background
 
-    if segment.asset_path and os.path.isfile(segment.asset_path):
-        source = segment.asset_path
-        is_video = os.path.splitext(source)[1].lower() in asset_lib.VIDEO_SUFFIXES
-        # Cover the frame and crop, never letterbox: black bars on a vertical
-        # feed read as a reposted landscape video.
-        scale = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
-                 f"crop={WIDTH}:{HEIGHT}")
+    if background and os.path.isfile(background):
+        is_video = os.path.splitext(background)[1].lower() in asset_lib.VIDEO_SUFFIXES
         if is_video:
+            # Cover the frame and crop, never letterbox: black bars on a
+            # vertical feed read as a reposted landscape video.
+            motion = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
+                      f"crop={WIDTH}:{HEIGHT}")
             args = [ffmpeg, "-y", "-stream_loop", "-1", "-t", f"{duration:.3f}",
-                    "-i", source]
+                    "-i", background]
         else:
-            args = [ffmpeg, "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", source]
+            motion = _ken_burns(duration, index)
+            args = [ffmpeg, "-y", "-loop", "1", "-t", f"{duration:.3f}",
+                    "-i", background]
+
+        # A photograph needs the words on top of it; a type card already is them.
+        plate, plate_h = caption_png(
+            segment.text, os.path.join(workdir, f"cap{index:02d}.png"))
+        args += ["-i", plate]
+        graph = (
+            f"[0:v]{motion},fps={FPS},format=yuv420p[bg];"
+            f"[bg][1:v]overlay=(W-w)/2:{HEIGHT - SAFE_BOTTOM - plate_h}:"
+            f"format=auto,format=yuv420p[v]"
+        )
+        args += ["-filter_complex", graph, "-map", "[v]"]
     else:
-        background = card(segment.text, os.path.join(workdir, f"card{index:02d}.png"),
-                          kind=segment.kind)
-        source, scale = background, f"scale={WIDTH}:{HEIGHT}"
+        source = card(segment.text, os.path.join(workdir, f"card{index:02d}.png"),
+                      kind=segment.kind)
         args = [ffmpeg, "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", source]
+        args += ["-vf", f"scale={WIDTH}:{HEIGHT},fps={FPS},format=yuv420p"]
 
-    # The card already shows its own text; drawing the caption on top of it too
-    # would print the same sentence twice.
-    filters = [scale, f"fps={FPS}", "format=yuv420p"]
-    if segment.asset_path:
-        filters.insert(2, _subtitle_filter(segment.text))
-
-    args += ["-vf", ",".join(filters), "-an", "-c:v", "libx264",
-             "-preset", "medium", "-crf", "20", "-t", f"{duration:.3f}", out_path]
+    args += ["-an", "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+             "-t", f"{duration:.3f}", out_path]
     _run(args)
     return out_path
 
@@ -339,11 +431,15 @@ def compose(segments: list[Segment], out_path: str, workdir: str) -> Rendered:
 
 
 async def render(script: dict, *, out_path: str, workdir: str,
-                 library_dir: str | None = None) -> Rendered:
+                 library_dir: str | None = None,
+                 generate_images: bool = True) -> Rendered:
     """Script in, 9:16 master out.
 
-    Scenes are backed by Autenia's own footage where the library has something
-    that fits, and by typography where it does not.
+    Three tiers of background, in strict order of preference: Autenia's own
+    footage where the library has something that fits; a generated photograph
+    where it does not; typography where even that fails. The order matters —
+    real material is the whole point of the format, and generated imagery is
+    the stand-in that keeps the short watchable until there is enough of it.
     """
     os.makedirs(workdir, exist_ok=True)
     segments = segments_of(script)
@@ -354,6 +450,13 @@ async def render(script: dict, *, out_path: str, workdir: str,
     plan = asset_lib.plan_visuals([s.visual_request for s in segments], library)
     for segment, chosen in zip(segments, plan):
         segment.asset_path = chosen.path if chosen else None
+
+    uncovered = [s for s in segments if not s.asset_path]
+    if generate_images and uncovered:
+        pictures = await images.for_scenes(
+            [s.visual_request for s in uncovered], [s.text for s in uncovered])
+        for segment, picture in zip(uncovered, pictures):
+            segment.image_path = picture
 
     await narrate(segments, workdir)
     return compose(segments, out_path, workdir)

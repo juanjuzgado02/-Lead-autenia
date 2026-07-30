@@ -214,13 +214,25 @@ subtítulos dentro de la zona segura y compone 1080×1920 H.264/AAC a 30 fps.
 Reels y Shorts igualan la reproducción: una narración floja no se queda floja, se
 sube con su ruido de fondo y suena peor que las de al lado.
 
-**Cuando una escena no tiene material, sale una tarjeta tipográfica.** Es una
-decisión, no un hueco por rellenar: un clip de stock sin relación, o el pantallazo
-de un producto que no existe, serían peores. Se arregla metiendo material real en
-`data/library`, nunca relajando el criterio.
+**El fondo se elige en tres niveles, y el orden no se negocia:** material propio
+de `data/library`; si no hay, una fotografía generada con `autenia/images.py`; y
+si eso falla, una tarjeta tipográfica. Las fotos llevan un travelling lento para
+que no parezcan diapositivas.
 
-**Pendiente:** pruebas de `render.py` y `cycle.py` —los dos únicos módulos sin
-ellas—, revisión visual del máster y logo/CTA discretos.
+Lo generado es un suplente mientras la biblioteca se llena, no un sustituto. Dos
+reglas que lo mantienen honesto:
+
+- **Una escena que pide "una pantalla de Autenia" se responde con el escritorio
+  alrededor de la pantalla, nunca con una interfaz inventada.** Generar el
+  producto y publicarlo como si existiera es lo que más avergonzaría a Autenia.
+- **Ningún modelo de imagen escribe texto.** Todos los prompts prohíben letras,
+  cifras y logotipos: el texto generado sale ilegible y se nota al instante. Las
+  palabras reales las dibuja Pillow después.
+
+Coste medido el 2026-07-30: unos 0,03 € por imagen, así que un short de cinco
+escenas ronda 0,15 €. Por eso la caché en disco no es opcional.
+
+**Pendiente:** pruebas de `cycle.py` y logo/CTA discretos.
 
 - Usa por defecto 25–35 segundos; permite 20–45 según la idea y aplica un máximo
   interno de 55 segundos. No alargues contenido para llegar a una cifra.

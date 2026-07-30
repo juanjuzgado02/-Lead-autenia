@@ -50,3 +50,6 @@ skills-lock.json
 # Autenia runtime state (SQLite, renders, biblioteca visual)
 data/
 GUIA-DEL-REPOSITORIO.docx
+
+# Imágenes generadas (caché). Se regeneran pagando.
+data/cache/

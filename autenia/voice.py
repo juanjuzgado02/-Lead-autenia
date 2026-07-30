@@ -28,6 +28,25 @@ ELEVENLABS_MODEL = "eleven_multilingual_v2"
 #: ``python autenia_bot.py voces``, and the winner goes in AUTENIA_VOICE_NAME.
 ELEVENLABS_DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL"
 
+#: ElevenLabs' public premade voices, male, with fixed ids every account can
+#: use. The fallback for a key created without the ``voices_read`` permission —
+#: which is the default now, and which otherwise kills the audition even though
+#: synthesis itself works fine.
+#:
+#: These are English-native voices reading Spanish through the multilingual
+#: model. They are good, but a Spanish-native voice from the account's own
+#: library is better; widening the key's permissions is what unlocks that.
+ELEVENLABS_PUBLIC_MALE = (
+    ("JBFqnCBsd6RMkjVDRZzb", "George — británica, cálida"),
+    ("nPczCjzI2devNBz1zQrb", "Brian — grave, narrador"),
+    ("pqHfZKP75CvOlQylNhV4", "Bill — serena, de confianza"),
+    ("onwK4e9ZLuTAKqWW03F9", "Daniel — británica, con autoridad"),
+    ("CwhRBWXzGAHq8TQ4Fs17", "Roger — segura, directa"),
+    ("cjVigY5qzO86Huf0OWal", "Eric — cercana, conversacional"),
+    ("bIHbv24MWmeRgasZH58o", "Will — joven, natural"),
+    ("TX3LPaxmHKxFdv7VOQHJ", "Liam — enérgica"),
+)
+
 #: Gemini's male prebuilt voices, with the character each one advertises.
 #: Sampled 2026-07-30; Juan chose Iapetus.
 GEMINI_MALE_VOICES = (
@@ -158,6 +177,13 @@ async def catalogue(provider: str | None = None,
         response = await client.get(
             "https://api.elevenlabs.io/v1/voices",
             headers={"xi-api-key": autenia.elevenlabs_api_key})
+
+    if response.status_code in (401, 403):
+        # ElevenLabs scopes keys, and a new one has no `voices_read` by
+        # default. Synthesis still works, so falling back to the public voices
+        # lets the audition happen anyway rather than failing on a permission
+        # that has nothing to do with speaking.
+        return list(ELEVENLABS_PUBLIC_MALE)
     if response.status_code != 200:
         raise VoiceError(
             f"ElevenLabs returned {response.status_code}: {response.text[:200]}")

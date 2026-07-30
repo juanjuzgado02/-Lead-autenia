@@ -84,7 +84,22 @@ def _wants_a_screen(request_text: str) -> bool:
     return any(word in lowered for word in _SCREEN_WORDS)
 
 
-def build_prompt(visual_request: str, narration: str = "") -> str:
+#: Different shots of the same scene, in the order an editor would cut them.
+#:
+#: This is what makes a scene move without paying for video. One photograph held
+#: for six seconds is a slideshow no matter how far the camera creeps across it;
+#: two different framings of the same subject, cut on the narration's own pause,
+#: reads as edited footage. Each variation is a different prompt, so each gets
+#: its own cache entry and its own picture.
+SHOT_VARIATIONS = (
+    "Plano general del entorno, cámara a la altura de los ojos.",
+    "Plano de detalle, muy cerca de las manos y los papeles, fondo desenfocado.",
+    "Plano medio desde otro ángulo, con algo en primer término desenfocado.",
+    "Plano cenital sobre la mesa, ordenado y gráfico.",
+)
+
+
+def build_prompt(visual_request: str, narration: str = "", variation: int = 0) -> str:
     """Turn a script's visual note into something an image model can shoot.
 
     The script writes for a human editor ("un cuadro de mando de Autenia con el
@@ -103,6 +118,8 @@ def build_prompt(visual_request: str, narration: str = "") -> str:
     else:
         parts.append(f"Escena: {subject or 'una pequeña empresa española trabajando'}.")
     parts.append("Contexto: una pyme española, oficina real y modesta, no un rascacielos.")
+    if variation:
+        parts.append(SHOT_VARIATIONS[variation % len(SHOT_VARIATIONS)])
     parts.append(_BAN)
     return " ".join(parts)
 
@@ -152,20 +169,34 @@ async def generate(prompt: str, *, timeout: float = 180.0) -> str:
     raise ImageError("the image model returned no image")
 
 
-async def for_scenes(requests: list[str], narrations: list[str] | None = None
-                     ) -> list[str | None]:
-    """One image per scene, concurrently. ``None`` where generation failed.
+async def for_scenes(requests: list[str], narrations: list[str] | None = None,
+                     shots: list[int] | None = None
+                     ) -> list[list[str]]:
+    """Images per scene, concurrently. One list per scene, possibly empty.
 
-    A failure is not fatal: the renderer draws a typographic card instead. A
-    short with one plain scene beats no short at all, and the failure is visible
-    in the review before anything is published.
+    ``shots`` says how many framings each scene wants; a long scene gets two or
+    three so the picture can change while the sentence runs.
+
+    A failure is not fatal: the scene falls back to its remaining shots, or to a
+    typographic card. A short with one plain scene beats no short at all, and
+    the gap is visible in the review before anything is published.
     """
     narrations = narrations or [""] * len(requests)
-    prompts = [build_prompt(req, narration)
-               for req, narration in zip(requests, narrations)]
+    shots = shots or [1] * len(requests)
+
+    wanted: list[tuple[int, str]] = []
+    for index, (req, narration, count) in enumerate(zip(requests, narrations, shots)):
+        for variation in range(max(1, count)):
+            wanted.append((index, build_prompt(req, narration, variation)))
+
     results = await asyncio.gather(
-        *(generate(prompt) for prompt in prompts), return_exceptions=True)
-    return [None if isinstance(r, BaseException) else r for r in results]
+        *(generate(prompt) for _index, prompt in wanted), return_exceptions=True)
+
+    per_scene: list[list[str]] = [[] for _ in requests]
+    for (index, _prompt), result in zip(wanted, results):
+        if not isinstance(result, BaseException):
+            per_scene[index].append(result)
+    return per_scene
 
 
 def cost_cents(paths: list[str | None], *, before: set[str] | None = None) -> int:

@@ -111,8 +111,8 @@ async def test_one_failed_image_does_not_sink_the_others():
     with patch.object(images, "generate", AsyncMock(side_effect=flaky)):
         got = await images.for_scenes(["un escritorio", "una reunión de equipo"])
 
-    assert got[0] == "/tmp/ok.jpg"
-    assert got[1] is None
+    assert got[0] == ["/tmp/ok.jpg"]
+    assert got[1] == [], "a scene whose image failed falls back to type"
 
 
 @pytest.mark.asyncio

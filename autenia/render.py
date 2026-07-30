@@ -22,13 +22,17 @@ import re
 import shutil
 import subprocess
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import assets as asset_lib
 from . import ffmpeg as ff
 from . import images, voice
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
+
+#: Longest a single shot stays on screen. Anything above about four seconds on
+#: one still reads as a slideshow; the feed is full of edits that cut every two.
+MAX_SHOT_S = 3.5
 
 #: Vertical safe area. Platform chrome (captions, buttons, the profile row) eats
 #: the top and bottom of the frame; text outside this band gets covered.
@@ -58,12 +62,40 @@ class Segment:
     audio_path: str = ""
     duration_s: float = 0.0
     asset_path: str | None = None    # Autenia's own footage, always preferred
-    image_path: str | None = None    # generated stand-in when the library is short
+    image_paths: list[str] = field(default_factory=list)  # generated stand-ins
 
     @property
     def background(self) -> str | None:
-        """What this scene actually shows. Own material wins over generated."""
-        return self.asset_path or self.image_path
+        """What this scene opens on. Own material wins over generated."""
+        return self.asset_path or (self.image_paths[0] if self.image_paths else None)
+
+    @property
+    def image_path(self) -> str | None:
+        """Kept for callers that only care whether anything was generated."""
+        return self.image_paths[0] if self.image_paths else None
+
+    def shots(self) -> list[tuple[str | None, float]]:
+        """This segment cut into shots, as ``(background, seconds)``.
+
+        A scene lasting six seconds on one photograph is a slideshow however
+        far the camera creeps. Splitting it across the framings generated for
+        it — a wide, then a detail — is what makes it read as edited footage,
+        and it costs one extra image rather than a second of Veo.
+
+        Own footage is never cut up: a real clip already moves, and chopping it
+        into pieces of a fixed length would fight whatever it is showing.
+        """
+        duration = max(0.8, self.duration_s)
+        if self.asset_path or not self.image_paths:
+            return [(self.background, duration)]
+
+        wanted = min(len(self.image_paths),
+                     max(1, int(duration // MAX_SHOT_S) + (1 if duration % MAX_SHOT_S else 0)))
+        if wanted <= 1:
+            return [(self.image_paths[0], duration)]
+
+        each = duration / wanted
+        return [(self.image_paths[i], each) for i in range(wanted)]
 
 
 @dataclass
@@ -91,6 +123,17 @@ def segments_of(script: dict) -> list[Segment]:
     if cta:
         beats.append(Segment(kind="cta", text=cta, visual_request=cta))
     return beats
+
+
+def _shots_wanted(text: str) -> int:
+    """How many framings a line of narration is worth.
+
+    From words rather than seconds, because this runs before the voice does.
+    Capped at three: past that the cutting starts to fight the sentence.
+    """
+    words = len(re.findall(r"\S+", text))
+    seconds = words / 2.6
+    return max(1, min(3, int(seconds // MAX_SHOT_S) + 1))
 
 
 def _run(args: list[str]) -> None:
@@ -269,11 +312,13 @@ def _ken_burns(duration: float, index: int) -> str:
     )
 
 
-def _segment_clip(segment: Segment, out_path: str, workdir: str, index: int) -> str:
-    """One segment as a silent video of exactly its narration's length."""
+def _segment_clip(segment: Segment, out_path: str, workdir: str, index: int,
+                  *, background: str | None = None,
+                  duration: float | None = None) -> str:
+    """One shot as a silent video of exactly its share of the narration."""
     ffmpeg = _ffmpeg()
-    duration = max(0.8, segment.duration_s)
-    background = segment.background
+    duration = max(0.8, segment.duration_s if duration is None else duration)
+    background = segment.background if background is None else background
 
     if background and os.path.isfile(background):
         is_video = os.path.splitext(background)[1].lower() in asset_lib.VIDEO_SUFFIXES
@@ -407,9 +452,17 @@ def compose(segments: list[Segment], out_path: str, workdir: str) -> Rendered:
 
     ffmpeg = _ffmpeg()
     clips, audios = [], []
-    for index, segment in enumerate(segments):
-        clips.append(_segment_clip(
-            segment, os.path.join(workdir, f"clip{index:02d}.mp4"), workdir, index))
+    shot_number = 0
+    for segment in segments:
+        # The audio is one file per segment; the picture may change two or three
+        # times inside it. Splitting the video without touching the audio keeps
+        # them in sync by construction, because the shots add up to exactly the
+        # segment's own length.
+        for background, span in segment.shots():
+            clips.append(_segment_clip(
+                segment, os.path.join(workdir, f"clip{shot_number:02d}.mp4"),
+                workdir, shot_number, background=background, duration=span))
+            shot_number += 1
         audios.append(segment.audio_path)
 
     video_list = os.path.join(workdir, "clips.txt")
@@ -468,10 +521,17 @@ async def render(script: dict, *, out_path: str, workdir: str,
 
     uncovered = [s for s in segments if not s.asset_path]
     if generate_images and uncovered:
+        # How many framings each scene needs is known only after narration,
+        # which is when its real length is known — but generating images then
+        # would serialise two slow steps. Estimating from the word count costs
+        # nothing and is close enough: a scene one shot short simply holds its
+        # last framing a little longer.
+        wanted = [_shots_wanted(s.text) for s in uncovered]
         pictures = await images.for_scenes(
-            [s.visual_request for s in uncovered], [s.text for s in uncovered])
-        for segment, picture in zip(uncovered, pictures):
-            segment.image_path = picture
+            [s.visual_request for s in uncovered],
+            [s.text for s in uncovered], wanted)
+        for segment, taken in zip(uncovered, pictures):
+            segment.image_paths = list(taken)
 
     await narrate(segments, workdir)
     return compose(segments, out_path, workdir)

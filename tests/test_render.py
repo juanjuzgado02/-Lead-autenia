@@ -35,13 +35,13 @@ def test_a_scene_with_no_narration_is_dropped():
 def test_autenias_own_footage_beats_a_generated_picture():
     """The format is built on real material. Generated imagery is the stand-in."""
     segment = Segment(kind="escena", text="t", visual_request="v",
-                      asset_path="/lib/dashboard.png", image_path="/cache/x.jpg")
+                      asset_path="/lib/dashboard.png", image_paths=["/cache/x.jpg"])
     assert segment.background == "/lib/dashboard.png"
 
 
 def test_a_generated_picture_is_used_when_the_library_has_nothing():
     segment = Segment(kind="escena", text="t", visual_request="v",
-                      image_path="/cache/x.jpg")
+                      image_paths=["/cache/x.jpg"])
     assert segment.background == "/cache/x.jpg"
 
 

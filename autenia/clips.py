@@ -40,17 +40,20 @@ from .gemini import BASE, GeminiError, request
 #: the price gap.
 VIDEO_MODEL = "veo-3.1-lite-generate-preview"
 
-#: Seconds per generated clip. Short on purpose: shots run about three seconds
-#: on screen, and every extra second is billed.
-CLIP_SECONDS = 4
+#: Seconds per generated clip. Eight is Veo's ceiling — ten is refused — and it
+#: is the right choice despite costing twice a four-second one: a clip shorter
+#: than its scene is played on loop, and a visible loop looks worse than a
+#: photograph. Measured 2026-07-30: scenes run 2.6 to 6.3 seconds.
+CLIP_SECONDS = 8
 
-#: Roughly what one clip costs, in cents. List price, not measured on the
-#: account — treat the ledger figure as an upper bound until a bill confirms it.
-CLIP_COST_CENTS = 40
+#: Roughly what one eight-second clip costs, in cents. List price, not measured
+#: on the account — treat the ledger figure as an upper bound until a real bill
+#: confirms it.
+CLIP_COST_CENTS = 80
 
 #: How many *new* clips one video may pay for. Everything else comes from the
 #: cache or falls back to a photograph.
-MAX_NEW_PER_VIDEO = int(os.environ.get("AUTENIA_MAX_NEW_CLIPS", "1"))
+MAX_NEW_PER_VIDEO = int(os.environ.get("AUTENIA_MAX_NEW_CLIPS", "3"))
 
 #: Where generated footage lives between runs, like the image cache and for the
 #: same reason: two videos asking for the same shot should pay once.
@@ -95,12 +98,49 @@ def cache_path(prompt: str) -> str:
 
 
 def cached(prompt: str) -> str | None:
-    """The clip for this prompt if it is already paid for, else None."""
+    """The clip for this exact prompt if it is already paid for, else None."""
     path = cache_path(prompt)
     return path if os.path.isfile(path) and os.path.getsize(path) > 10_000 else None
 
 
-async def generate(prompt: str, *, seconds: int = CLIP_SECONDS) -> str:
+def library() -> list:
+    """Every clip generated so far, as matchable footage.
+
+    This is what makes "pay once, reuse for ever" true rather than aspirational.
+    Keying the cache on the prompt's hash only ever hits when two scenes ask for
+    *identical* wording, which two different news stories essentially never do —
+    the promise was empty until this existed.
+
+    Matching by meaning reuses the same code path as Autenia's own material, so
+    a generated clip about paperwork answers tomorrow's scene about paperwork.
+    """
+    from . import assets as asset_lib  # noqa: PLC0415 (circular at module scope)
+
+    return asset_lib.load_library(CACHE_DIR)
+
+
+def _remember(path: str, description: str) -> None:
+    """Record what a clip shows, so it can be found by meaning later."""
+    import json  # noqa: PLC0415
+
+    sidecar = os.path.join(CACHE_DIR, "library.json")
+    known: dict = {}
+    if os.path.isfile(sidecar):
+        try:
+            with open(sidecar, encoding="utf-8") as handle:
+                known = json.load(handle)
+        except (json.JSONDecodeError, OSError):
+            known = {}
+
+    known[os.path.basename(path)] = {"description": description}
+    tmp = f"{sidecar}.part"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(known, handle, ensure_ascii=False, indent=2)
+    os.replace(tmp, sidecar)
+
+
+async def generate(prompt: str, *, seconds: int = CLIP_SECONDS,
+                   description: str = "") -> str:
     """Film this shot, or return the copy already on disk."""
     hit = cached(prompt)
     if hit:
@@ -120,7 +160,9 @@ async def generate(prompt: str, *, seconds: int = CLIP_SECONDS) -> str:
         raise ClipError("Veo did not start an operation")
 
     uri = await _await_video(operation)
-    return await _download(uri, cache_path(prompt))
+    path = await _download(uri, cache_path(prompt))
+    _remember(path, description or prompt[:300])
+    return path
 
 
 async def _await_video(operation: str) -> str:
@@ -173,25 +215,38 @@ async def for_scenes(requests: list[str], narrations: list[str] | None = None,
                      *, budget: int = MAX_NEW_PER_VIDEO) -> list[str | None]:
     """A clip per scene where one is affordable, else ``None``.
 
-    Cache hits are free and unlimited; only genuinely new footage is rationed.
-    Scenes are served in order, so the hook — the shot that decides whether
+    Three tiers, cheapest first: footage already generated that *means* the same
+    thing, then the exact-prompt cache, then new film. Only the third is
+    rationed, because it is the only one that costs anything.
+
+    Scenes are filmed in order, so the hook — the shot that decides whether
     anyone watches the rest — gets first claim on the budget.
     """
     if not enabled():
         return [None] * len(requests)
 
+    from . import assets as asset_lib  # noqa: PLC0415 (circular at module scope)
+
     narrations = narrations or [""] * len(requests)
     prompts = [build_prompt(req, narration)
                for req, narration in zip(requests, narrations)]
 
-    found: list[str | None] = [cached(prompt) for prompt in prompts]
+    # Reuse what has already been paid for, matched by meaning. plan_visuals
+    # refuses a weak match and never repeats a shot inside one video, which is
+    # exactly the behaviour wanted here too.
+    reused = asset_lib.plan_visuals(list(requests), library())
+    found: list[str | None] = [asset.path if asset else None for asset in reused]
+
+    for index, prompt in enumerate(prompts):
+        if found[index] is None:
+            found[index] = cached(prompt)
 
     spent = 0
     for index, prompt in enumerate(prompts):
         if found[index] is not None or spent >= budget:
             continue
         try:
-            found[index] = await generate(prompt)
+            found[index] = await generate(prompt, description=requests[index])
             spent += 1
         except (ClipError, GeminiError) as exc:
             # A missing clip is a scene that shows a photograph instead. That is

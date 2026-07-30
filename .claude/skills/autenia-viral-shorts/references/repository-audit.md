@@ -173,8 +173,9 @@ arregla con material real en `data/library`.
 ## 8. Entorno de desarrollo (verificado 2026-07-30)
 
 La máquina del usuario es Windows 10. `python` es 3.14 (el proyecto declara 3.11,
-y las pruebas pasan igualmente). **No hay `ffmpeg` ni `ffprobe` en el `PATH`**, y
-**Docker Desktop estaba parado** el 2026-07-30.
+y las pruebas pasan igualmente). **`ffmpeg` 8.1.2 se instaló el 2026-07-30** con
+`winget install Gyan.FFmpeg`; está en el PATH de usuario, así que una terminal
+nueva lo ve. Docker Desktop estaba parado y ya no hace falta para renderizar.
 
 Consecuencias prácticas:
 
@@ -183,8 +184,12 @@ Consecuencias prácticas:
   y ninguna prueba necesita ffmpeg. Tardan ~3 s. Ya no hace falta el venv ligero
   que describía la auditoría anterior, porque ya no hay dependencias pesadas de
   las que aislarse.
-- **Cualquier verificación que ejecute ffmpeg** (render de humo, comprobar
-  1080×1920 a 30 fps con `ffprobe`, oír la normalización de audio) exige levantar
-  Docker o instalar ffmpeg en el host. No la des por hecha: dila como pendiente.
-- El render del 2026-07-29 que produjo `data/videos/8ebbb931-…/short.mp4` se hizo
-  con Docker levantado. Es la única prueba real de que la cadena completa compone.
+- **El render corre en el host.** Verificado el 2026-07-30 con un render de humo:
+  guion sintético → narración de Gemini TTS → composición → `ffprobe` confirma
+  1080×1920, H.264, 30 fps y AAC a 48 kHz, 433 KB para 14,6 s.
+- **Un proceso lanzado antes de instalar ffmpeg no lo ve**: hereda el PATH de
+  cuando arrancó. Si el bot dice "ffmpeg is not on PATH", reinícialo antes de
+  buscar el fallo en otro sitio.
+- Sin material en `data/library` la cobertura es 0% y el vídeo sale como tarjetas
+  tipográficas: texto blanco sobre fondo casi negro, legible pero desnudo. Es el
+  comportamiento diseñado, no un fallo del render.

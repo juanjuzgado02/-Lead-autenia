@@ -1,64 +1,46 @@
 # Git
 .git
 .gitignore
+.github
 
 # Python
 __pycache__
 *.py[cod]
-*$py.class
-*.so
 .Python
 .venv
 venv/
-ENV/
-.eggs/
-*.egg-info/
 .pytest_cache/
-
-# Node
-node_modules/
-remotion/node_modules/
-render-service/node_modules/
-dashboard/node_modules/
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
 
-# Video files (will be mounted via volume)
+# Runtime state: the database, the renders and the footage library are mounted
+# as a volume. Baking them into the image would ship drafts nobody approved.
+data/
+
+# Video files
 *.mp4
 *.avi
 *.mov
 *.mkv
 *.gif
-videos/
 
-# Model files (downloaded at build time)
-*.pt
-
-# Secrets — never bake real credentials into the image (repo is public,
-# image may be pushed to a registry). Runtime env comes via compose env_file.
+# Secrets — never bake real credentials into the image. Runtime env comes via
+# compose env_file.
 .env
 .env.*
 !.env.example
-!.env.cloud.example
 *.pem
 *.key
 
 # Docker
-Dockerfile
+Dockerfile*
 docker-compose.yml
 .dockerignore
 
-# Docs
-README.md
+# Docs and tests: not needed at runtime.
 *.md
-
-
-
-
-
-
-
+*.docx
+tests/

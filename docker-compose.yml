@@ -1,42 +1,18 @@
+# One service, because there is one thing to run.
+#
+# The stack used to be three containers: a FastAPI backend, a React dashboard
+# and a Remotion renderer. The review surface is Telegram now, so the dashboard
+# had no user; the render is ffmpeg, so the renderer had no consumer.
 services:
-  backend:
-    build: .
-    container_name: openshorts-backend
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-      - /app/__pycache__
-      - ./output:/app/output
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./dashboard
-      target: dev
-    container_name: openshorts-frontend
-    ports:
-      - "5175:5173"
-    volumes:
-      - ./dashboard:/app
-      - /app/node_modules
-    restart: unless-stopped
-    depends_on:
-      - backend
-
-  renderer:
+  bot:
     build:
       context: .
-      dockerfile: render-service/Dockerfile
-    container_name: openshorts-renderer
-    ports:
-      - "3100:3100"
+      dockerfile: Dockerfile.bot
+    container_name: autenia-bot
+    env_file: .env
     volumes:
-      - ./output:/output
-    environment:
-      - REMOTION_BUNDLE_PATH=/app/remotion
-      - OUTPUT_DIR=/output
-      - PORT=3100
+      # The database, the renders and the footage library. Everything the bot
+      # would be sad to lose lives here and nowhere else.
+      - ./data:/data
     restart: unless-stopped
-    depends_on:
-      - backend
+    # Long polling: no ports published, nothing reachable from outside.

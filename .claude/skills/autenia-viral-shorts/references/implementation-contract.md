@@ -11,20 +11,21 @@ aquí choca con el código actual, gana este documento y se actualiza
 Cada fase es un corte vertical entregable. **No empieces una fase sin que la anterior
 cumpla sus criterios.**
 
-### Fase 0 — Base segura (sin coste de API) — ✅ hecha salvo autenticación
+### Fase 0 — Base segura (sin coste de API) — ✅ hecha
 
 | Entregable | Criterio de aceptación | Estado |
 |---|---|---|
-| `core_config.py` nuevo en la raíz | Arranque falla con mensaje claro si falta una variable requerida. No importa nada de `cloud/`. Ningún valor secreto aparece en logs | ✅ |
+| `core_config.py` en la raíz | Arranque falla con mensaje claro si falta una variable requerida. Ningún valor secreto aparece en logs | ✅ |
 | `CLAUDE.md` actualizado | La sección de claves refleja el modelo server-side. Sin contradicción con la skill | ✅ |
-| Rutas públicas cerradas | `GET /gallery`, `/video/{id}`, `/api/saasshorts/gallery`, `/api/saasshorts/actor-gallery` devuelven 404/403 con llamada directa. Test que lo demuestra | ✅ 404 |
-| Galería fuera del dashboard | Sin navegación ni componentes de galería. `npm run build` y `npm run lint` limpios | ⚠️ build ✅; lint arranca por primera vez pero deja 17 problemas preexistentes ajenos a la fase (audit §9) |
-| Claves fuera del frontend | Cero `localStorage` de claves en `App.jsx`. Cabeceras `X-*-Key` retiradas o ignoradas. Test de resolución de secretos que no los expone | ✅ + purga de claves antiguas |
-| Autenticación delante de la UI | Ninguna interfaz desplegada accesible sin credencial. CORS restringido | ⚠️ CORS ✅; **autenticación pendiente** — bloqueante antes del VPS, no en local |
+| Superficie pública cerrada | Ninguna ruta pública alcanzable | ✅ **por eliminación** (2026-07-30): no hay servidor HTTP |
+| Claves fuera del navegador | Ninguna clave viaja al cliente ni se guarda en él | ✅ no hay cliente |
+| Autenticación delante de la UI | Ninguna interfaz desplegada accesible sin credencial | ✅ **ya no aplica**: no hay UI. El control de acceso es el `chat_id` autorizado de Telegram |
 
-El criterio de lint se redefine así: **el lint debe ejecutar y el código nuevo debe
-salir limpio.** Exigir cero problemas en todo el repositorio obligaría a reescribir
-componentes sin relación con la fase; esa limpieza va en su propio commit.
+Las tres últimas filas se cerraron borrando el panel de React y `app.py`, no
+configurándolos. Es más fuerte: una puerta que no existe no se puede dejar abierta
+por un despliegue mal configurado. Si alguna vez vuelve una superficie HTTP,
+vuelven también estos criterios y, con ellos, **un usuario y una credencial** —
+nunca registro, roles ni organizaciones.
 
 ### Fase 1 — Almacén y estados — ✅ hecha (2026-07-29)
 
@@ -129,10 +130,10 @@ Sobre el guion, aprendido al probarlo contra la API real:
 
 | Entregable | Criterio |
 |---|---|
-| Reparto de carga | VPS: coordinador, BD, Telegram, cola, publicación. Trabajo pesado (Whisper/YOLO/render) fuera si el VPS no da |
-| Auditoría previa | CPU, RAM, disco y arquitectura verificados antes de desplegar |
-| Compose limpio | Sin contenedores sin consumidor real. `docker compose config` válido |
-| Producción | Healthchecks, proxy HTTPS, copias de seguridad, límites de disco. Puertos de desarrollo no expuestos |
+| Reparto de carga | Todo en el VPS. Desde el recorte del 2026-07-30 la pila son cinco paquetes de Python más ffmpeg: ya no hay Whisper, YOLO ni torch que justifiquen partirla |
+| Auditoría previa | CPU, RAM, disco y arquitectura verificados antes de desplegar. El render con ffmpeg sigue siendo lo más caro |
+| Compose limpio | Un solo servicio (`bot`). Sin contenedores sin consumidor real. `docker compose config` válido |
+| Producción | Healthchecks, copias de seguridad, límites de disco. Sin proxy HTTPS: el long polling no abre puertos |
 
 ---
 
@@ -154,19 +155,18 @@ desde el navegador. Nunca impresas en logs.**
 
 | Variable | Fase | Notas |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | 4 | Bot nuevo de @BotFather. No reutilices el de `cloud/alerts.py` |
+| `TELEGRAM_BOT_TOKEN` | 4 | Bot nuevo de @BotFather |
 | `TELEGRAM_CHAT_ID` | 4 | Lista blanca. Un solo chat autorizado |
 | `TELEGRAM_WEBHOOK_SECRET` | 4 | **Solo con webhook.** El MVP usa long polling y no la necesita |
 | `UPLOAD_POST_API_KEY` | 5 | 10 subidas/mes gratis |
+| `UPLOAD_POST_USER` | 5 | El perfil de Upload-Post con las tres cuentas conectadas. Sin él la subida falla con un mensaje que no explica por qué |
 | `FAL_KEY` | opcional | **Solo** para experimentos de avatar. Faceless no la necesita |
 
-### Modo y superficie (fase 0, ya implementadas)
+### Modo
 
 | Variable | Por defecto | Notas |
 |---|---|---|
-| `AUTENIA_INTERNAL_MODE` | `true` | Cierra galerías, ignora cabeceras `X-*-Key`, restringe CORS. `false` devuelve el comportamiento BYOK de upstream |
-| `AUTENIA_ALLOWED_ORIGINS` | servidores de desarrollo locales | Orígenes CORS. Nunca `*` en modo interno |
-| `VITE_AUTENIA_INTERNAL_MODE` | `true` | Equivalente en la build del dashboard. Debe coincidir con el backend |
+| `AUTENIA_INTERNAL_MODE` | `true` | Declara despliegue privado monousuario. Desde el recorte del 2026-07-30 **no protege nada**: no hay superficie HTTP que cerrar. `AUTENIA_ALLOWED_ORIGINS` y `VITE_AUTENIA_INTERNAL_MODE` se eliminaron con el panel |
 
 ### Límites
 
@@ -296,10 +296,9 @@ Ejecuta de lo específico a lo general:
 
 ```bash
 pytest tests/ -k <lo_que_tocaste>     # primero lo tuyo
-pytest tests/                          # 19 archivos existentes, no los rompas
-cd dashboard && npm run build && npm run lint   # lint con --max-warnings 0
+pytest tests/                          # 200 pruebas en ~3 s, no las rompas
 docker compose config                  # antes de desplegar
-ffprobe -v error -show_streams <render_de_humo.mp4>
+ffprobe -v error -show_streams <render_de_humo.mp4>   # exige ffmpeg o Docker
 ```
 
 Cobertura obligatoria de la lógica nueva:

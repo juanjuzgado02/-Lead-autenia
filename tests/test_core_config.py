@@ -71,11 +71,17 @@ def test_dry_run_is_on_by_default(env):
     assert Settings().publish_dry_run is True
 
 
-def test_dry_run_stays_on_for_a_malformed_value(env):
-    """A typo must not be the thing that starts posting to real accounts."""
-    env.setenv("AUTENIA_PUBLISH_DRY_RUN", "flase")
-    with pytest.raises(ConfigError):
-        Settings().publish_dry_run
+@pytest.mark.parametrize("value", ["flase", "sí", "off?", "TRUE-ish"])
+def test_dry_run_stays_on_for_a_malformed_value(env, value):
+    """A typo must not be the thing that starts posting to real accounts.
+
+    Every other boolean raises on a value it does not recognise. This one
+    cannot: raising turns a typo into a crash loop on the VPS, and a crash loop
+    that nobody notices is how a half-configured bot ends up being "fixed" by
+    someone deleting the line entirely.
+    """
+    env.setenv("AUTENIA_PUBLISH_DRY_RUN", value)
+    assert Settings().publish_dry_run is True
 
 
 def test_dry_run_turns_off_only_with_an_explicit_false(env):
@@ -87,8 +93,14 @@ def test_internal_mode_is_the_default_in_this_fork(env):
     assert Settings().internal_mode is True
 
 
-def test_cors_is_not_a_wildcard_by_default(env):
-    assert "*" not in Settings().allowed_origins
+def test_nothing_here_serves_http(env):
+    """The CORS allowlist is gone because the thing it protected is gone.
+
+    It replaced the upstream's ``["*"]`` wildcard on a FastAPI app that no
+    longer exists. Removing the server is a stronger guarantee than configuring
+    it, and a setting that guards nothing reads as protection that isn't there.
+    """
+    assert not hasattr(Settings(), "allowed_origins")
 
 
 # -- feature validation ----------------------------------------------------

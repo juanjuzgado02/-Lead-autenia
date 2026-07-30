@@ -4,159 +4,133 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini 2.0 Flash for viral moment detection and title generation.
+Autenia Viral Shorts is the internal tool that produces Autenia's own social
+media: one vertical Spanish short per day about AI and the problems it solves
+for Spanish SMEs, reviewed by one person over Telegram, and published to TikTok,
+Instagram Reels and YouTube Shorts only after that person approves it. It sells
+[auteniaai.com](https://auteniaai.com/); it is not a product and has no customers.
+
+**This repository began as a fork of OpenShorts**, a SaaS that cut long YouTube
+videos into clips. Almost none of that survives, and the difference matters when
+reading old commits: OpenShorts started from somebody else's finished video and
+looked for the good bits. This tool starts from a news story and writes,
+narrates and composes an original one. There is no ingest, no transcription, no
+speaker tracking and no clipping, because there is no source video.
+
+Anything the fork carried that only served the old product — the React SaaS
+dashboard, the billing package, Whisper, YOLO, MediaPipe, PySceneDetect, yt-dlp,
+the Remotion renderer, the FastAPI job queue — was **removed on 2026-07-30**, not
+disabled. It is in git history if a decision needs revisiting; it is not in the
+working tree, and it should not come back without a reason that names this
+product.
 
 ## Development Commands
 
-### Local Development (Docker)
 ```bash
-docker compose up --build   # Build and run full stack
-```
-- Backend: http://localhost:8000 (FastAPI/Uvicorn)
-- Frontend: http://localhost:5175 (Vite proxies API calls to backend)
-
-### Frontend Only (Dashboard)
-```bash
-cd dashboard
-npm install
-npm run dev       # Dev server with HMR (port 5173)
-npm run build     # Production build
-npm run lint      # ESLint (strict, --max-warnings 0)
+pip install -r requirements.txt   # small on purpose: httpx, sqlalchemy, Pillow
+python autenia_bot.py listen      # the review bot (long polling)
+python autenia_bot.py cycle       # run one daily cycle by hand
+python autenia_bot.py both        # one cycle, then keep listening
+pytest tests/ -q                  # the whole suite, ~3 seconds
+docker compose up --build         # the same bot, containerised
 ```
 
-### Backend Only
-```bash
-pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 8000
-```
+`ffmpeg` and `ffprobe` must be on PATH — they are system binaries, not Python
+packages. The container installs them; a host run needs `apt install ffmpeg` or
+`winget install ffmpeg`.
 
 ## Architecture
 
-### Core Processing Pipeline
-1. **Ingest** - YouTube download (yt-dlp) or local upload
-2. **Transcription** - faster-whisper with word-level timestamps
-3. **Scene Detection** - PySceneDetect for segment boundaries
-4. **AI Analysis** - Gemini identifies 3-15 viral moments (15-60 sec each)
-5. **FFmpeg Extraction** - Precise clip cutting
-6. **AI Cropping** - Vertical reframing with subject tracking
-7. **Effects/Subtitles** - Optional AI-generated FFmpeg filters
-8. **Hook Overlay** - Text overlays with styled fonts
-9. **Voice Dubbing** - Optional ElevenLabs AI translation (30+ languages)
-10. **S3 Backup** - Silent background upload
-11. **Social Distribution** - Upload-Post API (async upload)
+### The daily cycle
 
-### Key Files
+1. **Collect** (`autenia/sources.py`) — Gemini with Google grounding, searching
+   problem-shaped angles rather than technology names. Redirects are resolved to
+   canonical URLs and checked against `autenia/urls.py` before being fetched.
+2. **Filter and score** (`autenia/editorial.py`) — hard exclusions first, then a
+   cheap score: recency, customer pain, fit with Autenia's services, hook
+   strength, evidence, visual potential, conversion, cost.
+3. **Write** (`autenia/gemini.py`) — a grounded script that keeps facts and
+   opinions apart and carries its sources.
+4. **Preflight** (`autenia/preflight.py`) — the last gate before spending:
+   duration, claims, usage rights, estimated cost, cached assets.
+5. **Review** (`autenia/telegram.py`) — script, sources and cost to one chat,
+   with `Aprobar`, `Pedir cambios`, `Rechazar`, `Regenerar`. Nothing renders
+   before a human approves the words.
+6. **Render** (`autenia/render.py`) — narration per segment via
+   `autenia/voice.py`, composed against Autenia's own footage from
+   `autenia/assets.py`, burned captions, 1080×1920 H.264/AAC 30 fps.
+7. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
+   single refusal cannot hide two successes. Dry run by default.
+
+### Key files
+
 | File | Purpose |
 |------|---------|
-| `main.py` | Core video processing: transcription, scene detection, clip extraction, vertical reframing |
-| `app.py` | FastAPI server with async job queue and REST endpoints |
-| `editor.py` | Gemini AI integration for dynamic video effects (FFmpeg filter generation) |
-| `hooks.py` | Hook text overlay generation with font rendering |
-| `s3_uploader.py` | AWS S3 upload with caching |
-| `subtitles.py` | SRT generation, FFmpeg subtitle burning, and dubbed video transcription |
-| `translate.py` | ElevenLabs dubbing API for AI voice translation |
-| `dashboard/src/App.jsx` | Main React component with state management |
-| `dashboard/src/components/TranslateModal.jsx` | Voice dubbing UI with language selection |
-| `dashboard/vite-plugin-seo.js` | Build-time SEO surface: injects crawler-visible homepage content, emits static pages, sitemap.xml and llms.txt |
-| `dashboard/seo/data.js` | Single source of truth for pricing, pipeline and competitor facts used by every generated page |
+| `core_config.py` | The one place configuration is resolved. Masks secrets, refuses to boot with `BILLING_ENABLED`. |
+| `autenia_bot.py` | Entry point: `listen` (long polling) or `cycle` (one run). |
+| `autenia/cycle.py` | The orchestration above, and the state transitions around it. |
+| `autenia/states.py` | The state machine. Every move is legal or it raises. |
+| `autenia/store.py` | SQLite via async SQLAlchemy. Deliberately separate from the upstream's Postgres. |
+| `autenia/editorial.py` | Hard filters and scoring. |
+| `autenia/sources.py` | Grounded search, canonical URLs, publisher attribution. |
+| `autenia/gemini.py` | Model calls: judgement, script, TTS. |
+| `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default, ElevenLabs opt-in. |
+| `autenia/render.py` | Script → 9:16 master, ffmpeg only. |
+| `autenia/assets.py` | Autenia's own footage library and coverage measurement. |
+| `autenia/publish.py` | Upload-Post, per network, dry-run by default. |
+| `autenia/ffmpeg.py` | Encoder selection and −14 LUFS loudness normalisation. |
+| `autenia/urls.py` | SSRF guard for URLs this machine fetches. |
 
-### SEO / AI-crawler surface
+### Things that will bite
 
-The dashboard is a client-rendered SPA with hash routing, so the HTML served for
-`/` used to contain an empty `<div id="root">`. Googlebot renders JavaScript and
-saw the real page; GPTBot, ClaudeBot and PerplexityBot do not and measured the
-homepage as zero characters of text. `vite-plugin-seo.js` fixes that at build time:
-
-- Injects the content of `seo/landing-fallback.js` into `#root`. React's
-  `createRoot().render()` replaces it on mount, so users get the app and
-  non-executing clients get the copy. **Keep it in sync with `Landing.jsx`.**
-- Emits the standalone pages under `/alternatives`, `/free-ai-clip-generator`,
-  `/open-source-video-clipper` and `/how-openshorts-works` as flat `.html` files.
-  nginx resolves the clean URL through `try_files $uri $uri.html`; serving them as
-  directories instead makes nginx 301 to a trailing slash and every canonical
-  would then point at a redirect.
-- Generates `sitemap.xml` and `llms.txt` from the same page list, so they cannot
-  drift. Do not add a static `public/sitemap.xml` back.
-
-When editing pricing anywhere, edit `seo/data.js` too. Nothing on the site should
-say "OpenShorts is free" without naming the Cloud price in the same breath: both
-are true of different editions and quoting only the first one is what makes AI
-answers describe the paid product as free.
-
-### Dual-Mode Video Reframing
-- **TRACK Mode** (single subject): MediaPipe face detection + YOLOv8 fallback with "Heavy Tripod" stabilization
-- **GENERAL Mode** (groups/landscapes): Blurred background layout preserving full width
-
-### Key Classes
-- `SmoothedCameraman` - Stabilized camera movement with safe zone logic (prevents jitter)
-- `SpeakerTracker` - Prevents rapid speaker switching, handles temporary occlusions
-
-### API Endpoints
-| Method | Route | Purpose |
-|--------|-------|---------|
-| POST | `/api/process` | Submit video for processing |
-| GET | `/api/status/{job_id}` | Poll job status and logs |
-| POST | `/api/edit` | Apply AI video effects |
-| POST | `/api/subtitle` | Generate and apply subtitles (auto-transcribes dubbed videos) |
-| POST | `/api/hook` | Add text hook overlays |
-| POST | `/api/translate` | AI voice dubbing via ElevenLabs |
-| GET | `/api/translate/languages` | List supported dubbing languages |
-| POST | `/api/social/post` | Post to social media (async upload) |
-
-### Concurrency Model
-Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
+- **`autenia/render.py` falls back to typographic cards** when the library has no
+  matching footage. That is deliberate — an unrelated stock clip, or a mock-up of
+  a product screen that does not exist, would both be worse than honest text. The
+  fix is real footage in `data/library`, never a laxer fallback.
+- **Search angles point at the problem, not the technology.** If the system
+  strings together empty days, review the angles before touching the threshold.
+  Lowering the bar is exactly what the brief forbids: a day without a video is a
+  valid outcome, filling the calendar is not.
+- **`renderizando` is the only state that spends money**, and it is not terminal.
+  A version parked there blocks the next cycle for ever, so every path out of it
+  must reach `publicado` or `fallido` — including dry runs.
 
 ## Environment Variables
 
-**Server-side (.env):**
-- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET` - For S3 backup
-- `MAX_CONCURRENT_JOBS` - Concurrent processing limit (default: 5)
-- `VITE_API_URL` - Production API URL override
-- `VITE_OPENPANEL_API_URL`, `VITE_OPENPANEL_CLIENT_ID` - Optional product analytics, read at **build** time. Unset (the default, including every self-hosted build) means no analytics is initialised and no third-party script is loaded. `dashboard/index.html` also gates reporting on an `ANALYTICS_HOSTS` allowlist, so a build carrying credentials stays inert on any other host.
+Everything is server-side. There is no browser, so there is no such thing as a
+key the browser holds.
 
-**Provider keys — server-side only in this fork (see Internal mode below):**
-- `GEMINI_API_KEY` - Google Gemini API key (required)
-- `ELEVENLABS_API_KEY` - ElevenLabs API key for voice/dubbing
-- `UPLOAD_POST_API_KEY` - Upload-Post API key for social posting
-- `FAL_KEY` - fal.ai, only for the avatar video modes; the faceless default never calls it
+**Provider keys:**
+- `GEMINI_API_KEY` — required: research, judgement, script and the default voice
+- `ELEVENLABS_API_KEY` — only with `AUTENIA_VOICE_PROVIDER=elevenlabs`
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — the review conversation
+- `UPLOAD_POST_API_KEY`, `UPLOAD_POST_USER` — publishing; the profile names the
+  account whose TikTok, Instagram and YouTube are connected
+- `FAL_KEY` — avatar experiments only; the faceless default never calls it
 
-### Internal mode (`AUTENIA_INTERNAL_MODE`, default **on**)
+**Behaviour:**
+- `AUTENIA_PUBLISH_DRY_RUN` — **on unless explicitly set to a value that reads as
+  false.** Alone among the booleans it does not raise on a malformed value, it
+  stays safe: a crash loop from a typo gets "fixed" by deleting the line, and
+  that is how an unapproved video reaches the company's accounts.
+- `AUTENIA_INTERNAL_MODE` (default on) — single-user private deployment. Retained
+  because it still guards CORS and key resolution, though the public surfaces it
+  used to close no longer exist to be closed.
+- `AUTENIA_VOICE_PROVIDER`, `AUTENIA_TZ` (`Europe/Madrid`), `AUTENIA_DB_PATH`,
+  `AUTENIA_WORK_DIR`, `AUTENIA_LIBRARY_DIR`
+- Limits: `AUTENIA_MAX_COST_PER_VIDEO` (0.50 €), `AUTENIA_MAX_COST_PER_MONTH`
+  (25 €), `AUTENIA_MAX_DURATION_S` (55)
 
-This repository is Autenia's private, single-user deployment, not the multi-tenant
-SaaS upstream. `core_config.py` is the one place that resolves configuration, and
-in internal mode:
-
-- **Every provider key comes from the server's `.env`.** The browser never
-  receives or stores one; the `X-Gemini-Key`, `X-ElevenLabs-Key`, `X-Fal-Key` and
-  `X-Upload-Post-Key` headers are ignored rather than trusted, and the dashboard
-  clears any key an older build left in `localStorage`. A key that ever sat in
-  browser storage should be **rotated at the provider**, not migrated.
-- **The public galleries are closed.** `/gallery`, `/video/{id}`,
-  `/api/saasshorts/gallery` and `/api/saasshorts/actor-gallery` return 404 at the
-  handler, not merely by being unlinked from the UI; uploads to the gallery are
-  refused too. Unapproved drafts are brand material and are not world-readable.
-- **CORS is restricted** to `AUTENIA_ALLOWED_ORIGINS` (local dev servers by
-  default) instead of the upstream `*` wildcard.
-- **Publishing is dry-run** until `AUTENIA_PUBLISH_DRY_RUN=false` is set
-  explicitly. Any unset or malformed value keeps it on.
-
-Set `AUTENIA_INTERNAL_MODE=false` (and `VITE_AUTENIA_INTERNAL_MODE=false` for the
-dashboard build) to get the upstream bring-your-own-key behaviour back.
-
-**Never set `BILLING_ENABLED`** — it activates the separately-licensed `cloud/`
-package. `core_config.validate_startup()` refuses to boot if it is on. Do not
-import from `cloud/` in new code.
-
-**Autenia limits:** `AUTENIA_MAX_COST_PER_VIDEO` (0.50 €),
-`AUTENIA_MAX_COST_PER_MONTH` (25 €), `AUTENIA_MAX_DURATION_S` (55),
-`AUTENIA_TZ` (`Europe/Madrid`), `AUTENIA_DB_PATH`.
+**Never set `BILLING_ENABLED`.** It belonged to the separately-licensed `cloud/`
+package, which is gone; `core_config.validate_startup()` still refuses to boot
+with it on, and that guard stays.
 
 > Never log a secret. `core_config.mask()` renders one safely and
 > `core_config.sanitize()` masks credentials in a payload before it is persisted
 > or printed — use it on every provider request and response.
 
 ## Tech Stack
-- **Backend:** Python 3.11, FastAPI, google-genai, faster-whisper, ultralytics (YOLOv8), mediapipe, opencv-python, yt-dlp, FFmpeg, httpx
-- **Frontend:** React 18, Vite 4, Tailwind CSS 3.4
-- **External APIs:** Google Gemini, ElevenLabs Dubbing, Upload-Post
-- **Infrastructure:** Docker + Docker Compose, AWS S3
+
+Python 3.11, httpx, SQLAlchemy + aiosqlite, Pillow, ffmpeg. Gemini for research,
+script and voice; ElevenLabs optional; Upload-Post for distribution. Docker for
+deployment. No frontend, no web server, no inbound ports.

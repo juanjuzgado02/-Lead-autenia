@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import urls
 from .editorial import Candidate
 from .gemini import TEXT_MODEL, GeminiError, Usage, json_call, request, usage_of
 
@@ -126,15 +127,29 @@ async def _search(days: int) -> tuple[str, list[dict], Usage]:
 
 
 async def _resolve(client: httpx.AsyncClient, uri: str) -> str | None:
-    """Follow a grounding redirect to the canonical URL, or None if it dies."""
+    """Follow a grounding redirect to the canonical URL, or None if it dies.
+
+    The redirect chain is attacker-influenceable: the target is whatever the
+    search index points at, and a redirect can land anywhere — including this
+    machine's own network. Both ends of the chain are therefore checked against
+    the public-address rule before and after following it.
+    """
+    # The guard resolves DNS, which blocks; off the loop it goes, or a dozen
+    # concurrent lookups would serialise the whole collector.
+    try:
+        await asyncio.to_thread(urls.assert_public_url, uri)
+    except urls.UnsafeURLError:
+        return None
     try:
         response = await client.head(uri)
         if response.status_code >= 400:
             response = await client.get(uri)
         if response.status_code >= 400:
             return None
-        return str(response.url)
-    except httpx.HTTPError:
+        final = str(response.url)
+        await asyncio.to_thread(urls.assert_public_url, final)
+        return final
+    except (httpx.HTTPError, urls.UnsafeURLError):
         return None
 
 

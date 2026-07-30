@@ -61,8 +61,8 @@ comentarios.
 **Contacto:** autenia@proton.me
 
 **CTA por defecto:** dirigir al cuestionario de la web. **Nunca** uses "link in bio"
-como fórmula fija — es el CTA cableado que hay que eliminar del prompt
-(`saasshorts.py:530`). Redacta el CTA según la idea, y que suene a invitación a
+como fórmula fija: era el CTA cableado del prompt heredado de OpenShorts, que se
+eliminó con él. Redacta el CTA según la idea, y que suene a invitación a
 diagnóstico, no a compra.
 
 Ejemplos de tono correcto: *"Si esto te suena, en la web hay un cuestionario de un

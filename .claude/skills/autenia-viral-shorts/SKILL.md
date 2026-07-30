@@ -1,6 +1,6 @@
 ---
 name: autenia-viral-shorts
-description: Adapta, implementa, audita, prueba y despliega el repositorio OpenShorts de Autenia como herramienta interna para descubrir temas, crear vídeos verticales diarios en español, revisarlos por Telegram y publicarlos con aprobación humana en Instagram Reels, TikTok y YouTube Shorts. Úsala al trabajar sobre juanjuzgado02/-Lead-autenia, especialmente su rama dev, o sobre una copia derivada para Autenia. Incluye estrategia editorial, privacidad, costes, secretos en .env, Docker, VPS, estados de aprobación, publicación idempotente y analítica. No la uses para construir un SaaS multiempresa o dar acceso a clientes; eso requiere otro repositorio, otra skill y revisar la licencia de cloud/.
+description: Implementa, audita, prueba y despliega la herramienta interna de Autenia para descubrir temas, crear vídeos verticales diarios en español, revisarlos por Telegram y publicarlos con aprobación humana en Instagram Reels, TikTok y YouTube Shorts. Úsala al trabajar sobre juanjuzgado02/-Lead-autenia, especialmente su rama dev, o sobre una copia derivada para Autenia. Incluye estrategia editorial, privacidad, costes, secretos en .env, Docker, VPS, estados de aprobación, publicación idempotente y analítica. No la uses para construir un SaaS multiempresa o dar acceso a clientes; eso es otro producto, otro repositorio y otra skill.
 ---
 
 # Autenia Viral Shorts
@@ -12,8 +12,16 @@ un vídeo útil al día para dar visibilidad a Autenia y captar conversaciones
 comerciales. Optimiza probabilidad de retención, compartidos y leads; nunca
 prometas viralidad.
 
-Trabaja de forma incremental sobre OpenShorts. No reconstruyas el producto desde
-cero ni amplíes el alcance hacia un SaaS multiusuario.
+Trabaja de forma incremental sobre lo que ya existe en `autenia/`. No amplíes el
+alcance hacia un SaaS multiusuario.
+
+**El repositorio se recortó el 2026-07-30.** Nació como fork de OpenShorts, que
+recortaba vídeos largos de YouTube; todo lo que servía solo a aquel producto —el
+panel de React, `cloud/` con su facturación, `app.py`, `main.py`, `saasshorts.py`,
+Whisper, YOLO, MediaPipe, yt-dlp, Remotion— se eliminó, no se desactivó. Si una
+instrucción menciona un archivo que no encuentras, esa es la razón: está en el
+historial de git, no en el árbol. No lo restaures sin un motivo que nombre este
+producto.
 
 ## Qué significa "se hace solo"
 
@@ -84,8 +92,8 @@ a partir de memoria** ni generes un sustituto aproximado.
    cambiado, reaudita únicamente los flujos afectados y actualiza las conclusiones.
 4. Comprueba herramientas disponibles, variables ya definidas, Docker, FFmpeg, Node
    y Python. Nunca imprimas valores secretos.
-5. Revisa la licencia raíz y `cloud/LICENSE`. Mantén `cloud/` fuera del trabajo
-   salvo petición explícita y licencia compatible.
+5. Revisa la licencia raíz (MIT, heredada de OpenShorts). El paquete `cloud/`, que
+   tenía licencia comercial aparte, ya no está en el repositorio: no lo restaures.
 6. Presenta un plan por fases y empieza por el corte vertical mínimo. No conviertas
    toda la aplicación en una sola intervención.
 
@@ -127,34 +135,32 @@ Todo lo demás tiene valor por defecto. Úsalo y decláralo.
 
 ## Implementar por cortes verticales
 
-### 1. Asegurar y simplificar la base — ✅ hecho (2026-07-29), salvo autenticación
+### 1. Asegurar y simplificar la base — ✅ hecho (2026-07-29 y 2026-07-30)
 
-Ya existe `core_config.py` en la raíz: resuelve todas las claves desde el `.env`
-del servidor, valida al arrancar, enmascara secretos (`mask`, `sanitize`) y se
-niega a arrancar con `BILLING_ENABLED`. La bandera `AUTENIA_INTERNAL_MODE`
-(por defecto **on**) ignora las cabeceras `X-*-Key`, cierra las cuatro rutas de
-galería con 404, bloquea la subida a galería y restringe CORS. El dashboard ya no
-guarda claves y purga las que dejara una build anterior. `CLAUDE.md` y
-`.env.example` documentan el modelo correcto.
+`core_config.py` resuelve todas las claves desde el `.env` del servidor, valida al
+arrancar, enmascara secretos (`mask`, `sanitize`) y se niega a arrancar con
+`BILLING_ENABLED`. `CLAUDE.md` y `.env.example` documentan el modelo correcto.
+
+El 2026-07-30 se cerró la parte que faltaba, y por eliminación en vez de por
+configuración: **ya no hay superficie HTTP**. Sin `app.py`, sin panel y sin
+navegador no hay cabecera `X-*-Key` que ignorar, ni galería que devolver 404, ni
+CORS que restringir — y por eso desapareció `allowed_origins`. `AUTENIA_INTERNAL_MODE`
+sobrevive como declaración de intenciones, no como guardia.
+
+Esto también cierra lo que quedaba pendiente: **la autenticación ya no hace falta**.
+No se protege una interfaz que no existe. El único canal de entrada es Telegram, y
+ahí manda un solo `chat_id`; cualquier otro se descarta sin contestar.
 
 Al trabajar sobre esta base:
 
-- **Respeta `AUTENIA_INTERNAL_MODE`.** Toda superficie pública nueva debe llamar a
-  `deny_if_internal()` como primera sentencia, y toda clave nueva debe resolverse
-  en `core_config.py`, nunca desde una cabecera.
-- **Nunca importes desde `cloud/`** ni enciendas `BILLING_ENABLED`.
+- **No añadas una superficie HTTP.** Si alguna vez hace falta, tendrá que
+  comprobar `internal_mode` y llevar delante un único usuario y una única
+  credencial leída de `core_config.py` — nunca registro, roles ni organizaciones.
+- **Toda clave nueva se resuelve en `core_config.py`**, nunca desde una petición.
 - **Nunca registres un secreto.** Pasa peticiones y respuestas por
   `core_config.sanitize()` antes de persistirlas o imprimirlas.
-- Separa la lógica nueva de `app.py` (3.797 líneas) en módulos pequeños. Conserva
-  adaptadores finos en las rutas existentes cuando ayuden a no romper el producto.
-
-**Pendiente de esta fase:** autenticación delante de toda interfaz desplegada y
-volúmenes persistentes privados. No es bloqueante en local; sí antes del VPS.
-
-Para esa autenticación: **un único usuario, una única credencial**. Basta un token
-compartido o HTTP basic sobre HTTPS, leído de `core_config.py`. No construyas
-registro, roles, organizaciones ni recuperación de contraseña — eso es la
-ampliación a SaaS que esta skill prohíbe.
+- **Nunca enciendas `BILLING_ENABLED`.** El paquete `cloud/` ya no está; el
+  guardia de arranque se queda igualmente.
 
 ### 2. Motor editorial — ✅ núcleo hecho (2026-07-29)
 
@@ -197,7 +203,23 @@ No copies titulares o vídeos de terceros como sustituto de una pieza propia.
 Parafrasea, atribuye y usa capturas o clips únicamente cuando el derecho de uso lo
 permita.
 
-### 3. Renderizar el formato correcto
+### 3. Renderizar el formato correcto — 🚧 en curso (2026-07-30)
+
+Ya existe `autenia/render.py`: narra segmento a segmento con `autenia/voice.py`
+(así cada escena dura exactamente lo que dura su frase, y el feedback sobre una
+escena solo regenera esa), busca material propio con `autenia/assets.py`, quema
+subtítulos dentro de la zona segura y compone 1080×1920 H.264/AAC a 30 fps.
+`autenia/ffmpeg.py` normaliza el audio a −14 LUFS, que es el nivel al que TikTok,
+Reels y Shorts igualan la reproducción: una narración floja no se queda floja, se
+sube con su ruido de fondo y suena peor que las de al lado.
+
+**Cuando una escena no tiene material, sale una tarjeta tipográfica.** Es una
+decisión, no un hueco por rellenar: un clip de stock sin relación, o el pantallazo
+de un producto que no existe, serían peores. Se arregla metiendo material real en
+`data/library`, nunca relajando el criterio.
+
+**Pendiente:** pruebas de `render.py` y `cycle.py` —los dos únicos módulos sin
+ellas—, revisión visual del máster y logo/CTA discretos.
 
 - Usa por defecto 25–35 segundos; permite 20–45 según la idea y aplica un máximo
   interno de 55 segundos. No alargues contenido para llegar a una cifra.
@@ -208,20 +230,17 @@ permita.
 - Usa subtítulos legibles, zonas seguras y cambios visuales con propósito. No
   satures la pantalla.
 - Inserta logo y CTA discretos; evita marcas de agua de otras plataformas.
-- Corrige el prompt rígido de `saasshorts.py:444-537`: elimina la exigencia de
-  aspecto europeo (`:534`), el CTA fijo "link in bio" (`:530`), el número fijo de
-  escenas y las duraciones contradictorias.
-- `viral_hook_text` sí llega a la composición (`main.py:72` → `hooks.py`). Verifica
-  que sigue surtiendo efecto tras tus cambios; no lo conviertas en dato decorativo.
 - Reutiliza guion, voz, imágenes y segmentos sin cambios durante una iteración.
   Regenera solo lo afectado por el feedback.
 
-### 4. Añadir revisión rápida por Telegram
+### 4. Añadir revisión rápida por Telegram — ✅ hecho (2026-07-29)
 
-- Persiste cada contenido y versión antes de enviar la revisión. Usa un almacén
-  **propio y separado** de `cloud/` (SQLite vía SQLAlchemy async + aiosqlite).
-  `cloud/database.py` es solo-Postgres (ejecuta `CREATE EXTENSION citext` en `:31`)
-  y está dormido con `BILLING_ENABLED` off — no lo reutilices ni lo despiertes.
+Ya existen `autenia/store.py` y `autenia/states.py` (SQLite con SQLAlchemy async y
+aiosqlite), `autenia/telegram.py` (long polling, un solo chat autorizado, callbacks
+idempotentes atados a una versión) y `autenia_bot.py`. Las reglas de abajo siguen
+valiendo para cualquier cambio.
+
+- Persiste cada contenido y versión antes de enviar la revisión.
 - Envía vídeo comprimido o enlace privado temporal, título, caption, fuentes, coste
   estimado y versión.
 - Incluye botones `Aprobar`, `Pedir cambios`, `Rechazar` y `Regenerar`.
@@ -235,13 +254,22 @@ permita.
 - Verifica `chat_id` permitido y correspondencia entre callback, contenido y
   versión. Con webhook, además, la firma del secreto.
 - Nunca publiques desde el callback de aprobación si el modo dry-run está activo.
-- El Telegram existente (`cloud/alerts.py`) es solo aviso unidireccional bajo
-  licencia comercial. Construye el bot de aprobación como componente nuevo.
 
 Usa la máquina de estados y las reglas de concurrencia de
 `implementation-contract.md`.
 
-### 5. Publicar con seguridad
+### 5. Publicar con seguridad — 🚧 medio hecho (2026-07-30)
+
+Ya existe `autenia/publish.py`, extraído del `app.py` que se borró: una llamada a
+Upload-Post **por red**, no una con las tres, porque la respuesta agregada del
+proveedor hace que dos éxitos y un rechazo se lean igual que todo bien. Recorta
+títulos y descripciones a los límites de cada red antes de subir, distingue un
+timeout ("sin respuesta", ambiguo) de un rechazo, y `key_for(version_id, platform)`
+da la clave idempotente. Probado con 2xx, 4xx, 5xx, timeout y fallo parcial.
+
+**Pendiente:** persistir esas claves y las respuestas saneadas en el almacén. Hasta
+que exista esa tabla, la clave se calcula pero no se consulta: un reintento tras
+una caída a mitad de publicación no puede distinguir "ya subido" de "no subido".
 
 - Publica únicamente una versión aprobada y sin mutaciones posteriores.
 - Usa una clave idempotente por contenido, versión y plataforma.
@@ -279,14 +307,15 @@ solo multiplica los fallos.
 - Mantén en el VPS el coordinador, base de datos, Telegram, cola y publicación para
   que el ordenador pueda apagarse.
 - Usa APIs externas para generación pesada en el primer MVP.
-- Ejecuta Whisper, YOLO o render pesado en el ordenador o en un servidor
-  dimensionado; no asumas que un VPS pequeño soporta la pila completa.
-- Audita CPU, RAM, disco y arquitectura antes del despliegue. Ajusta servicios de
-  Compose y elimina del MVP los contenedores sin consumidor real — hoy hay tres
-  (`backend`, `frontend`, `renderer`); `renderer` (Remotion) probablemente no
-  participe en el MVP faceless.
-- Usa imágenes de producción, healthchecks, proxy HTTPS, copias de seguridad y
-  límites de disco. No expongas directamente los puertos de desarrollo.
+- **La pila cabe en un VPS pequeño desde el 2026-07-30.** Al irse Whisper, YOLO,
+  MediaPipe y torch, `requirements.txt` bajó de ~3 GB a cinco paquetes puros de
+  Python; el render es ffmpeg, que un servidor modesto sí aguanta. Mide antes de
+  prometerlo, pero ya no hay que partir el despliegue entre portátil y servidor.
+- Compose tiene **un solo servicio** (`bot`), no tres. Los otros dos servían al
+  panel y al renderizador de Remotion, que ya no existen. No añadas un servicio
+  sin un consumidor real.
+- Usa imágenes de producción, healthchecks, copias de seguridad y límites de
+  disco. No hace falta proxy HTTPS: el long polling no abre ningún puerto.
 
 ## Controlar coste y calidad
 
@@ -305,10 +334,9 @@ solo multiplica los fallos.
 
 Ejecuta primero las pruebas más específicas y después:
 
-- Compilación Python y pruebas unitarias (`pytest tests/`, 19 archivos existentes).
-- Build y lint del dashboard (`npm run build`, `npm run lint` con `--max-warnings 0`).
+- Compilación Python y pruebas unitarias (`pytest tests/`, 200 pruebas en ~3 s).
+  Ya no hay frontend que construir ni lintar.
 - Pruebas de resolución de secretos sin exponerlos.
-- Pruebas de galería denegada.
 - Pruebas de filtros editoriales, cálculo de coste y caché.
 - Pruebas de estados, callbacks de Telegram y autorización de chat.
 - Pruebas de idempotencia y publicación simulada con respuestas 2xx, 4xx, 5xx y
@@ -334,5 +362,7 @@ Resume al final:
 
 Si el usuario pide que clientes entren con sus cuentas, detén la ampliación. Propón
 una base separada con autenticación, organizaciones, aislamiento por tenant,
-OAuth/perfiles sociales por cliente, roles, cuotas, facturación y auditoría; revisa
-antes la licencia de `cloud/`.
+OAuth/perfiles sociales por cliente, roles, cuotas, facturación y auditoría. Este
+repositorio ya no contiene nada de eso: el paquete `cloud/` que lo traía —bajo
+licencia comercial distinta de la MIT raíz— se eliminó el 2026-07-30. Rescatarlo
+del historial de git para un producto de pago exige revisar antes esa licencia.

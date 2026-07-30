@@ -1,20 +1,33 @@
-# Autenia's review bot and daily cycle.
+# Autenia's review bot and daily cycle — the whole product, in one container.
 #
-# Built on the backend image because the render needs its ffmpeg: composing the
-# 9:16 master on a bare host fails with "ffmpeg is not on PATH", which is what a
-# host-run bot does the moment a script is approved.
+# It used to build on the OpenShorts backend image, which carried torch, YOLO
+# and Whisper for a pipeline this product does not run. Standalone and slim
+# instead: python, ffmpeg, and four pure-python packages. That is the
+# difference between an image a small VPS can pull and one it cannot.
 #
 # Long polling means no inbound ports, no domain and no certificate.
-FROM openshorts-backend:latest
+FROM python:3.11-slim
 
-# The content store's async SQLite driver. In requirements.txt, but the base
-# image predates it. The base runs as appuser, who does not own /opt/venv, so
-# install as root and drop back straight away.
-USER root
-RUN pip install --no-cache-dir aiosqlite==0.20.0
-USER appuser
+# ffmpeg composes the 9:16 master and ffprobe verifies it. Without them the bot
+# starts fine and then fails the moment a script is approved, which is the worst
+# possible time to discover a missing binary.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY core_config.py autenia_bot.py ./
+COPY autenia/ ./autenia/
+COPY fonts/ ./fonts/
+
+# Nothing here needs root, and a bot that polls the internet should not have it.
+RUN useradd --create-home --uid 10001 autenia \
+    && mkdir -p /data && chown -R autenia:autenia /data /app
+USER autenia
 
 # The database, rendered videos and the footage library all live on a mounted
 # volume, so restarting the container never loses a script awaiting review.
@@ -22,6 +35,11 @@ ENV AUTENIA_DB_PATH=/data/autenia.db \
     AUTENIA_WORK_DIR=/data/videos \
     AUTENIA_LIBRARY_DIR=/data/library \
     PYTHONUNBUFFERED=1
+
+# Says whether the configuration resolves and the binaries are there, without
+# printing a single secret.
+HEALTHCHECK --interval=5m --timeout=30s --start-period=30s \
+    CMD python -c "import core_config, shutil, sys; core_config.settings.describe(); sys.exit(0 if shutil.which('ffmpeg') else 1)"
 
 ENTRYPOINT ["python", "autenia_bot.py"]
 CMD ["listen"]

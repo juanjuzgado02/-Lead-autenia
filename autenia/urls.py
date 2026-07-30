@@ -1,10 +1,13 @@
-"""Small, dependency-free SSRF guards shared by the download / scrape paths.
+"""Small, dependency-free SSRF guard for URLs this machine fetches.
 
-The app fetches user-supplied URLs server-side (yt-dlp downloads, SaaS landing
-page scraping, actor-image download). Without a guard, a caller can point those
-at internal services or the cloud metadata endpoint (169.254.169.254) to read
-instance credentials. ``assert_public_url`` rejects non-HTTP(S) schemes and any
-host that resolves to a private / loopback / link-local / reserved address.
+The collector follows links it did not choose: Google's grounding metadata
+hands back redirect URIs, and a redirect can point anywhere — including back
+at this host's own network or, on a VPS, at the cloud metadata endpoint
+(169.254.169.254) that hands out instance credentials to whoever asks.
+
+``assert_public_url`` rejects non-HTTP(S) schemes and any host that resolves to
+a private, loopback, link-local, reserved, multicast or unspecified address. It
+performs DNS resolution, so call it off the event loop (``asyncio.to_thread``).
 """
 from __future__ import annotations
 

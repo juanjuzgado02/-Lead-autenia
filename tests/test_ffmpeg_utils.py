@@ -2,8 +2,8 @@ import subprocess
 
 import pytest
 
-import ffmpeg_utils
-from ffmpeg_utils import (
+from autenia import ffmpeg as ffmpeg_utils
+from autenia.ffmpeg import (
     DELIVERY,
     METADATA_SCRUB,
     QUALITY,

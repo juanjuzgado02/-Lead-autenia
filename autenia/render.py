@@ -25,6 +25,7 @@ import textwrap
 from dataclasses import dataclass
 
 from . import assets as asset_lib
+from . import ffmpeg as ff
 from . import voice
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
@@ -318,8 +319,13 @@ def compose(segments: list[Segment], out_path: str, workdir: str) -> Rendered:
     _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", audio_list,
           "-c", "copy", joined_audio])
 
+    # Loudness matters more here than it looks. TikTok, Reels and Shorts all
+    # normalise playback to about -14 LUFS: a quiet narration is not left quiet,
+    # it is turned up along with its noise floor, and it sounds thin next to
+    # everything else in the feed. Synthesised speech has no consistent level,
+    # so normalise at the one encode where the audio is touched anyway.
     _run([ffmpeg, "-y", "-i", joined_video, "-i", joined_audio,
-          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+          "-c:v", "copy", *ff.audio_encode_args(), "-b:a", "192k", "-ar", "48000",
           "-shortest", "-movflags", "+faststart", out_path])
 
     total = sum(segment.duration_s for segment in segments)

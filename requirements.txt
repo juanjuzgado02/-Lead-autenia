@@ -1,25 +1,21 @@
-scenedetect==0.7
-transnetv2-pytorch==1.0.5
-ultralytics==8.4.46
-torch==2.11.0
-torchvision==0.26.0
-tqdm==4.67.3
-yt-dlp
-faster-whisper==1.2.1
-py3langid==0.3.0
-google-genai==1.75.0
-python-dotenv==1.2.2
-mediapipe==0.10.14
-boto3==1.43.4
+# Autenia Viral Shorts — herramienta interna.
+#
+# El fork venía con la pila de recortar vídeos largos (torch, ultralytics,
+# mediapipe, faster-whisper, scenedetect, yt-dlp: ~3 GB). Este producto no
+# recorta vídeo ajeno: escribe un guion, lo narra y lo compone. Nada de eso
+# hace falta, y quitarlo es lo que permite que quepa en un VPS pequeño.
 
-fastapi==0.136.1
-uvicorn==0.46.0
-python-multipart==0.0.27
+# Modelos, voz y publicación
 httpx==0.28.1
-Pillow==12.2.0
-beautifulsoup4==4.14.3
+python-dotenv==1.2.2
 
-# Autenia content store (autenia/). SQLite via aiosqlite — deliberately separate
-# from cloud/, which is Postgres-only and separately licensed.
+# Almacén de contenidos (autenia/). SQLite vía aiosqlite — deliberadamente
+# separado de la base Postgres del upstream comercial.
 sqlalchemy[asyncio]==2.0.36
 aiosqlite==0.20.0
+
+# Tarjetas tipográficas y medición de texto en el render
+Pillow==12.2.0
+
+# ffmpeg y ffprobe NO son paquetes de Python: instálalos en el sistema
+# (`apt install ffmpeg` / `winget install ffmpeg`). Dockerfile.bot ya lo hace.

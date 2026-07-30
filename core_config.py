@@ -148,7 +148,7 @@ FEATURE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "editorial": ("GEMINI_API_KEY",),          # phase 2: research, script, titles
     "voice": ("ELEVENLABS_API_KEY",),          # phase 3: Spanish voiceover
     "review": ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"),   # phase 4
-    "publish": ("UPLOAD_POST_API_KEY",),       # phase 5
+    "publish": ("UPLOAD_POST_API_KEY", "UPLOAD_POST_USER"),   # phase 5
     "avatar": ("FAL_KEY",),                    # optional experiments only
 }
 
@@ -193,6 +193,15 @@ class Settings:
         return _env("UPLOAD_POST_API_KEY")
 
     @property
+    def upload_post_user(self) -> Optional[str]:
+        """The Upload-Post profile whose social accounts are connected.
+
+        Not a secret — it is a profile name — but publishing without it fails
+        at the vendor with a message that does not say what is wrong.
+        """
+        return _env("UPLOAD_POST_USER")
+
+    @property
     def fal_key(self) -> Optional[str]:
         return _env("FAL_KEY")
 
@@ -212,12 +221,18 @@ class Settings:
     # -- operating mode ----------------------------------------------------
     @property
     def internal_mode(self) -> bool:
-        """Autenia's single-user private deployment.
+        """Autenia's single-user private deployment. Declared, not enforced.
 
-        On (the default in this fork) the public galleries are closed, browser
-        API keys are ignored and every credential is resolved server-side. Set
-        ``AUTENIA_INTERNAL_MODE=false`` to get the upstream OpenShorts
-        bring-your-own-key behaviour back.
+        It used to gate a web surface: browser-supplied keys were ignored,
+        public galleries answered 404 and CORS stopped being a wildcard. That
+        surface was removed rather than guarded — there is no HTTP server, no
+        dashboard and no browser here now, so those doors cannot be opened by
+        setting a flag to false.
+
+        What remains is a statement of intent that ``describe()`` reports and
+        ``validate_startup`` evaluates, so a malformed value is caught at boot.
+        Anything new that would serve HTTP or accept a key from a caller must
+        check this flag — and should probably not exist.
         """
         return _env_bool("AUTENIA_INTERNAL_MODE", True)
 
@@ -226,27 +241,20 @@ class Settings:
         """Never publish for real unless this is explicitly turned off.
 
         Defaults to True and stays True for any unset or malformed value, so a
-        typo can only ever be safe.
+        typo can only ever be safe. Every other boolean raises on a value it
+        does not recognise; this one must not, because the failure mode of
+        raising here is a crash loop, and the failure mode of guessing wrong is
+        an unapproved video on the company's accounts. Only a value that
+        unambiguously reads as false turns it off.
         """
-        return _env_bool("AUTENIA_PUBLISH_DRY_RUN", True)
+        try:
+            return _env_bool("AUTENIA_PUBLISH_DRY_RUN", True)
+        except ConfigError:
+            return True
 
     @property
     def db_path(self) -> str:
         return _env("AUTENIA_DB_PATH") or "data/autenia.db"
-
-    @property
-    def allowed_origins(self) -> list[str]:
-        """Browser origins allowed to call the API in internal mode.
-
-        Defaults to the local dev servers only. A deployed UI must add its own
-        origin explicitly — the upstream ``["*"]`` wildcard is not acceptable
-        once the server holds the credentials.
-        """
-        raw = _env("AUTENIA_ALLOWED_ORIGINS")
-        if not raw:
-            return ["http://localhost:5175", "http://localhost:5173",
-                    "http://127.0.0.1:5175", "http://127.0.0.1:5173"]
-        return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
     @property
     def voice_provider(self) -> str:

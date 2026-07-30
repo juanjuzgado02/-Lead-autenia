@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from core_config import settings as autenia
 
 from . import assets as asset_lib
-from . import editorial, gemini, preflight, render, sources, store, telegram, voice
+from . import (editorial, gemini, preflight, publish, render, sources, store,
+               telegram, voice)
 from .models import Content, Version
 from .states import State, StateError
 
@@ -285,21 +286,38 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
         fresh.duration_s = result.duration_s
         caption = fresh.caption or ""
 
-    if autenia.publish_dry_run:
-        await telegram.send_video(
-            result.path,
-            f"🧪 <b>Modo simulación</b> — no se ha publicado.\n"
-            f"{result.duration_s:.0f}s · {result.coverage:.0%} material propio")
-        await telegram.send_message(
-            "Para publicar de verdad: <code>AUTENIA_PUBLISH_DRY_RUN=false</code> "
-            "y una <code>UPLOAD_POST_API_KEY</code> configurada.")
+    title = script.get("titulo") or script.get("hook") or "Autenia"
+    await telegram.send_video(
+        result.path,
+        f"{'🧪 Simulando publicación' if autenia.publish_dry_run else '📤 Publicando'}…\n"
+        f"{result.duration_s:.0f}s · {result.coverage:.0%} material propio")
+
+    try:
+        outcomes = await publish.publish(
+            result.path, version_id=version_id, title=title, caption=caption)
+    except publish.PublishError as exc:
+        await telegram.send_message(f"❌ No se ha podido publicar: {exc}")
         return
 
-    await telegram.send_video(
-        result.path, f"📤 Publicando…\n{caption[:400]}")
-    await telegram.send_message(
-        "⚠️ La publicación todavía no está implementada (fase 5). "
-        "El vídeo está renderizado y aprobado, pero no se ha subido a ninguna red.")
+    lines = [outcome.summary for outcome in outcomes]
+    if autenia.publish_dry_run:
+        lines.append("")
+        lines.append("Para publicar de verdad: <code>AUTENIA_PUBLISH_DRY_RUN=false</code>, "
+                     "<code>UPLOAD_POST_API_KEY</code> y <code>UPLOAD_POST_USER</code>.")
+    await telegram.send_message("\n".join(lines))
+
+    # `renderizando` is not terminal, and a version parked there would block
+    # tomorrow's cycle for ever. So a dry run still closes the version — with a
+    # note that says plainly that nothing left the building.
+    async with store.session() as sess:
+        fresh = await sess.get(Version, version_id)
+        if all(outcome.ok for outcome in outcomes):
+            note = "simulado (dry-run): no se envió a ninguna red" if autenia.publish_dry_run else None
+            await store.transition(sess, fresh, State.PUBLICADO, note=note)
+        else:
+            failed = ", ".join(o.platform for o in outcomes if not o.ok)
+            await store.transition(sess, fresh, State.FALLIDO,
+                                   note=f"publicación fallida en {failed}")
 
 
 # --------------------------------------------------------------------------

@@ -75,6 +75,38 @@ class Result:
         return "preflight failed:\n" + "\n".join(f"  - {p}" for p in self.problems)
 
 
+#: Ways a narration can name where a figure came from. The generic ones exist
+#: because a script that says "Según Europa Press" three times in a row reads
+#: like a teleprinter; the second mention is allowed to be "el mismo informe".
+_ATTRIBUTION = re.compile(
+    r"\b(seg[uú]n|de acuerdo con|conforme a|un informe|el informe|"
+    r"ese informe|el mismo informe|un estudio|el estudio|ese estudio|"
+    r"los datos de|esos datos|estos datos|las cifras de|datos del|"
+    r"public[oó]|recoge|cifra en|estima)\b",
+    re.IGNORECASE)
+
+#: Words too common to prove a source was named. "Blog" or "España" appearing
+#: in a narration says nothing about attribution.
+_WEAK_SOURCE_WORDS = frozenset({
+    "blog", "empresas", "empresa", "espana", "españa", "news", "diario",
+    "revista", "digital", "grupo", "el", "la", "los", "las", "de", "del",
+})
+
+
+def _says_its_source(narration: str, source: str) -> bool:
+    """Whether the spoken line actually tells the viewer where this came from.
+
+    Accepts either a distinctive word from the source's name ("Según *Europa
+    Press*") or an attribution turn of phrase, which covers the repeat case the
+    prompt allows.
+    """
+    lowered = narration.lower()
+    for word in re.findall(r"\w{4,}", source.lower()):
+        if word not in _WEAK_SOURCE_WORDS and word in lowered:
+            return True
+    return bool(_ATTRIBUTION.search(narration))
+
+
 def estimate_seconds(text: str) -> float:
     words = len(re.findall(r"\S+", text))
     return words / WORDS_PER_SECOND if words else 0.0
@@ -119,6 +151,14 @@ def check(script: dict, *, narration: str, estimated_cents: int = 0,
             problems.append(Problem(
                 "afirmacion",
                 f"escena {index + 1} afirma un hecho sin citar fuente"))
+        elif kind == "hecho" and not _says_its_source(narracion, scene["fuente"]):
+            # The `fuente` field is for the reviewer; the viewer never sees it.
+            # A figure with no name behind it sounds invented, which is the
+            # difference between a fact and a salesman's promise.
+            problems.append(Problem(
+                "afirmacion",
+                f"escena {index + 1} no nombra su fuente en la narración "
+                f"(«{scene['fuente']}»): añade «Según…» o similar"))
 
         # A number inside an opinion is a fact wearing a disguise.
         if kind == "opinion" and _NUMERIC_CLAIM.search(narracion):

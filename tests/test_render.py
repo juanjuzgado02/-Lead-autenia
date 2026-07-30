@@ -68,12 +68,13 @@ def test_the_caption_is_one_plate_not_one_per_line(tmp_path):
     assert image.mode == "RGBA"
     assert image.height == height
     # A staircase would leave fully transparent rows between the bands. Down
-    # the middle of a single plate every row is covered — by the backing at
-    # alpha 150, or by a glyph on top of it. The corners are rounded, so this
-    # samples the centre column rather than the edge.
+    # the middle of a single plate every row is covered — by the backing, or by
+    # a glyph on top of it. The corners are rounded, so this samples the centre
+    # column rather than the edge.
     middle = image.width // 2
     covered = [image.getpixel((middle, y))[3] for y in range(2, image.height - 2)]
-    assert min(covered) >= 150, "the plate must be continuous behind every line"
+    assert min(covered) >= render.CAPTION_PLATE_ALPHA, (
+        "the plate must be continuous behind every line")
 
 
 def test_the_caption_never_reaches_the_frame_edge(tmp_path):

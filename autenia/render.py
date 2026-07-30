@@ -165,9 +165,24 @@ def _escape(text: str) -> str:
 
 
 #: Caption geometry. The plate is one rounded rectangle behind the whole block.
-CAPTION_SIZE = 56
-CAPTION_PAD = 28
-CAPTION_LEADING = 14
+#:
+#: Toned down on 2026-07-30: at 56px with a heavy plate the caption was the
+#: loudest thing on screen, and the picture — the part that took the work — sat
+#: behind it. Smaller type, a lighter plate and a lower seat put the words back
+#: where they belong: readable, and second.
+CAPTION_SIZE = 44
+CAPTION_PAD = 20
+CAPTION_LEADING = 10
+
+#: How far the caption sits above the bottom edge. Lower than the safe area's
+#: full inset: platform chrome eats the very bottom, but not 200px of it, and
+#: captions parked high in frame read as a slideshow subtitle rather than a
+#: short's burned-in text.
+CAPTION_BOTTOM = 210
+
+#: Plate opacity. Enough to hold white type over a bright photograph, little
+#: enough to see the photograph through it.
+CAPTION_PLATE_ALPHA = 115
 
 
 def caption_png(text: str, out_path: str) -> tuple[str, int]:
@@ -210,8 +225,8 @@ def caption_png(text: str, out_path: str) -> tuple[str, int]:
 
     image = Image.new("RGBA", (plate_w, plate_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0, 0, plate_w - 1, plate_h - 1), radius=18,
-                           fill=(0, 0, 0, 150))
+    draw.rounded_rectangle((0, 0, plate_w - 1, plate_h - 1), radius=14,
+                           fill=(0, 0, 0, CAPTION_PLATE_ALPHA))
 
     y = CAPTION_PAD
     for line, width in zip(lines, widths):
@@ -280,7 +295,7 @@ def _segment_clip(segment: Segment, out_path: str, workdir: str, index: int) -> 
         args += ["-i", plate]
         graph = (
             f"[0:v]{motion},fps={FPS},format=yuv420p[bg];"
-            f"[bg][1:v]overlay=(W-w)/2:{HEIGHT - SAFE_BOTTOM - plate_h}:"
+            f"[bg][1:v]overlay=(W-w)/2:{HEIGHT - CAPTION_BOTTOM - plate_h}:"
             f"format=auto,format=yuv420p[v]"
         )
         args += ["-filter_complex", graph, "-map", "[v]"]

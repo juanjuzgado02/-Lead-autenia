@@ -237,6 +237,19 @@ VOZ
 - No expliques cómo funciona la tecnología. Muestra un trabajo manual que
   desaparece.
 
+ATRIBUCIÓN — OBLIGATORIA Y HABLADA
+- Toda escena marcada como "hecho" **dice su fuente en voz alta**, dentro de la
+  narración: "Según Europa Press…", "Un informe de la CEOE cifra…", "Los datos
+  del INE dicen que…".
+- No basta con rellenar el campo "fuente": ese campo lo ve el revisor, no el
+  espectador. Una cifra sin nombre detrás suena inventada, y es la diferencia
+  entre un dato y una promesa de vendedor.
+- Dilo de forma natural y breve, al principio de la frase. No lo conviertas en
+  una nota al pie: "Según Europa Press, el absentismo cerró el año en el 7,7%."
+- Si dos escenas seguidas usan la misma fuente, en la segunda basta con "el
+  mismo informe" o "esos datos". Repetir el nombre tres veces suena a locución
+  de teletipo.
+
 REGLAS DURAS
 - Cada afirmación factual sale de los hechos que te doy, y la marcas como
   "hecho" citando su fuente.

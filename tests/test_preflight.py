@@ -27,10 +27,11 @@ def good_script(**overrides):
         "hook": "Cuatro horas cada lunes haciendo el mismo informe.",
         "escenas": [
             {
-                "narracion": "El 70% de las consultas de una tienda son repetidas.",
+                "narracion": "Según Ejemplo, el 70% de las consultas de una "
+                             "tienda son repetidas.",
                 "visual": "captura de un agente contestando en WhatsApp",
                 "tipo": "hecho",
-                "fuente": "https://ejemplo.es/estudio",
+                "fuente": "Ejemplo",
             },
             {
                 "narracion": "Eso es tiempo que no vuelves a tocar.",
@@ -160,3 +161,67 @@ def test_every_problem_is_reported_at_once():
     script["escenas"][0]["fuente"] = ""
     result = check(script, narration=narration_of(70))
     assert {"hook", "cta", "afirmacion", "duracion"} <= rules(result)
+
+
+# -- spoken attribution (2026-07-30) --------------------------------------
+
+def test_a_fact_that_does_not_name_its_source_out_loud_is_refused():
+    """The `fuente` field is for the reviewer; the viewer never sees it.
+
+    A figure with nobody's name behind it sounds invented — which is exactly
+    the difference between a fact and a salesman's promise, on a channel that
+    sells "experiencia real, no hype".
+    """
+    script = good_script(escenas=[{
+        "narracion": "El absentismo cerró el año en el 7,7%.",
+        "visual": "un cuadro de mando",
+        "tipo": "hecho",
+        "fuente": "Europa Press",
+    }])
+    result = check(script, narration=narration_of(28))
+    assert not result.ok
+    assert any("no nombra su fuente" in p.detail for p in result.problems)
+
+
+def test_naming_the_outlet_in_the_line_is_enough():
+    script = good_script(escenas=[{
+        "narracion": "Según Europa Press, el absentismo cerró el año en el 7,7%.",
+        "visual": "un cuadro de mando",
+        "tipo": "hecho",
+        "fuente": "Europa Press",
+    }])
+    assert check(script, narration=narration_of(28)).ok
+
+
+@pytest.mark.parametrize("linea", [
+    "El mismo informe cifra el coste en 8.000 millones.",
+    "Esos datos apuntan a 12 horas semanales.",
+    "Un estudio reciente lo sitúa en el 40%.",
+])
+def test_a_second_mention_may_be_generic(linea):
+    """Saying "Según Europa Press" three times running reads like a teleprinter."""
+    script = good_script(escenas=[{
+        "narracion": linea, "visual": "un cuadro de mando",
+        "tipo": "hecho", "fuente": "Europa Press",
+    }])
+    assert check(script, narration=narration_of(28)).ok
+
+
+def test_a_common_word_in_the_source_name_does_not_count_as_attribution():
+    """"Blog Empresas Yoigo" must not be satisfied by the word "empresas"."""
+    script = good_script(escenas=[{
+        "narracion": "Las empresas pierden 12 horas al mes en papeleo.",
+        "visual": "un escritorio",
+        "tipo": "hecho",
+        "fuente": "Blog Empresas Yoigo",
+    }])
+    result = check(script, narration=narration_of(28))
+    assert not result.ok
+
+
+def test_an_opinion_needs_no_attribution():
+    script = good_script(escenas=[{
+        "narracion": "Es tiempo que no vuelves a recuperar.",
+        "visual": "un escritorio", "tipo": "opinion",
+    }])
+    assert check(script, narration=narration_of(28)).ok

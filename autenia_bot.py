@@ -61,13 +61,21 @@ async def audition_voices(limit: int = 8) -> None:
 
     encoder = shutil.which("ffmpeg")
     workdir = tempfile.mkdtemp(prefix="autenia-voces-")
+    skipped: list[str] = []
     for index, (identifier, description) in enumerate(voices, 1):
         wav = os.path.join(workdir, f"{index:02d}.wav")
         try:
             await voice.synthesize(voice.AUDITION_TEXT, out_path=wav,
                                    provider=provider, name=identifier)
         except voice.VoiceError as exc:
-            print(f"[voces] {identifier}: {exc}")
+            # Say which ones did not come, or the numbering has silent holes
+            # and the one that matters most is the one that went missing:
+            # ElevenLabs refuses library voices on a free plan, and those are
+            # exactly the native Spanish ones.
+            reason = ("hace falta plan de pago" if "payment_required" in str(exc)
+                      else str(exc)[:80])
+            skipped.append(f"<b>{index}.</b> {description} — {reason}")
+            print(f"[voces] {index}. {description}: {exc}")
             continue
 
         sendable = wav
@@ -84,7 +92,11 @@ async def audition_voices(limit: int = 8) -> None:
             title=f"{index}. {description[:40]}")
         print(f"[voces] {index}. {description}")
 
-    print(f"[voces] {len(voices)} enviadas. Los archivos quedan en {workdir}")
+    if skipped:
+        await telegram.send_message(
+            "⚠️ Estas no se han podido probar:\n" + "\n".join(skipped))
+    print(f"[voces] {len(voices) - len(skipped)} enviadas, {len(skipped)} saltadas. "
+          f"Los archivos quedan en {workdir}")
 
 
 async def main() -> int:

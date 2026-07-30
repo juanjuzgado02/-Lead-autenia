@@ -197,8 +197,30 @@ async def catalogue(provider: str | None = None,
             str(labels[key]) for key in ("accent", "age", "description")
             if labels.get(key))
         name = entry.get("name", "sin nombre")
-        found.append((entry["voice_id"], f"{name} — {detail}" if detail else name))
-    return found
+        found.append((
+            _spanishness(entry, labels),
+            entry["voice_id"],
+            f"{name} — {detail}" if detail else name,
+        ))
+
+    # Native Spanish first, and Spain's accent before Latin America's. The
+    # audition is truncated to a handful of voices: on 2026-07-30 an account
+    # with 23 voices had its only two Spanish ones sitting last in the list,
+    # so a run that sent the first eight sent eight English ones. Autenia
+    # publishes in Spanish only — the language is not a tie-break, it is the
+    # first thing that matters.
+    found.sort(key=lambda row: (-row[0], row[2]))
+    return [(voice_id, description) for _rank, voice_id, description in found]
+
+
+def _spanishness(entry: dict, labels: dict) -> int:
+    """2 for a Spain-accented Spanish voice, 1 for any Spanish, 0 otherwise."""
+    language = (labels.get("language")
+                or (entry.get("fine_tuning") or {}).get("language") or "")
+    accent = str(labels.get("accent", "")).lower()
+    if not str(language).lower().startswith("es"):
+        return 0
+    return 2 if accent in ("peninsular", "spanish", "castilian", "spain") else 1
 
 
 def _duration_s(path: str) -> float:

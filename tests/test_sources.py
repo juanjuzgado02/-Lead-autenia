@@ -218,17 +218,43 @@ def test_rotation_covers_every_angle_eventually():
     assert seen == set(sources.SEARCH_ANGLES)
 
 
-def test_every_angle_asks_about_a_problem_not_a_product():
-    """The 2026-07-29 finding, kept as a rule.
+def test_no_angle_is_shaped_like_a_shopping_list():
+    """The 2026-07-29 finding, narrowed on 2026-07-30.
 
-    Technology-shaped angles returned a consultancy's promo, a regulator's
-    notice and a product launch — all scored near zero, because none describes
-    something a manager suffers on a Monday.
+    The original rule banned the word "herramienta" outright, which stopped
+    being right the moment AI tools became a subject the channel wants. What
+    actually poisoned those searches was the *shape* of the query: "los mejores
+    X", "comparativa de Y", anything priced or ranked returns affiliate pages
+    and vendor landing pages, whatever the topic. Asking what a tool does for a
+    business returns reporting.
     """
-    banned = ("software", "herramienta", "plataforma", "solución", "mejores",
-              "comparativa", "precio")
+    banned = ("mejores", "mejor software", "comparativa", "precio", "ranking",
+              "opiniones", "descuento", "gratis")
     for angle in sources.SEARCH_ANGLES:
         assert not any(word in angle.lower() for word in banned), angle
+
+
+def test_most_of_a_run_is_about_ai_but_never_all_of_it():
+    """AI is the subject; a week of only model releases is a tech channel.
+
+    The viewer is a manager who does not follow any of that, so one question
+    about what they already suffer stays in every run.
+    """
+    ai = set(sources.SEARCH_ANGLES[:sources.AI_ANGLES])
+    pain = set(sources.SEARCH_ANGLES[sources.AI_ANGLES:])
+
+    for offset in range(14):
+        day = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(days=offset)
+        chosen = sources.angles_for(day)
+        assert len(chosen & ai if isinstance(chosen, set) else ai & set(chosen)) >= 1
+        assert set(chosen) & pain, f"día {offset} no pregunta por ningún dolor"
+        assert len(set(chosen) & ai) > len(set(chosen) & pain)
+
+
+def test_a_single_angle_run_still_works():
+    """Guard the arithmetic when the run size is smaller than the mix."""
+    chosen = sources.angles_for(datetime(2026, 5, 5, tzinfo=timezone.utc), count=1)
+    assert len(chosen) == 1
 
 
 @pytest.mark.asyncio

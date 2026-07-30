@@ -205,16 +205,53 @@ def survives(candidate: Candidate) -> bool:
 # Scoring
 # --------------------------------------------------------------------------
 
-#: What each signal is worth. Fit and pain dominate: a piece that speaks to a
-#: real cost the viewer already feels beats a fresher piece that does not.
+#: Subject matter that Autenia wants to be the channel for: artificial
+#: intelligence itself, the tools built on it, and what they can now do.
+#:
+#: Added 2026-07-30 at Juan's request. It sits deliberately alongside the
+#: earlier finding that searches must aim at the *problem* rather than the
+#: technology — those are not in conflict. What scored near zero on 2026-07-29
+#: was vendor self-promotion, not AI as a subject: a consultancy's own advert,
+#: a NIST notice, an Oracle launch. A capability that changed, a tool an SME
+#: can actually use, an adoption figure — those are exactly Autenia's ground.
+#: The defence against the promo pile is :data:`PROMOTIONAL`, below, not
+#: refusing to talk about AI.
+AI_TOPICS = (
+    "inteligencia artificial", "ia generativa", "ia", "modelo de lenguaje",
+    "llm", "chatgpt", "gpt", "copilot", "gemini", "claude", "llama",
+    "agente de ia", "agentes de ia", "agente autonomo", "asistente virtual",
+    "chatbot", "aprendizaje automatico", "machine learning", "red neuronal",
+    "vision artificial", "reconocimiento de voz", "transcripcion automatica",
+    "generacion de texto", "generacion de imagenes", "automatizacion inteligente",
+    "copiloto", "prompt", "openai", "anthropic", "deepseek", "mistral",
+    "herramienta de ia", "herramientas de ia", "aplicacion de ia",
+)
+
+#: Marketing dressed as news. Penalised rather than excluded outright: a real
+#: story sometimes uses this vocabulary, and a hard filter would take it too.
+PROMOTIONAL = (
+    "lanza", "lanzamiento", "presenta su", "anuncia el", "nueva version",
+    "ya disponible", "el mejor", "los mejores", "guia definitiva",
+    "comparativa", "ranking de", "precios y planes", "prueba gratis",
+    "descuento", "webinar", "patrocinado", "nota de prensa",
+)
+
+#: What each signal is worth. Fit and subject dominate: Autenia wants to be the
+#: place people hear about AI, and a piece that speaks to a cost the viewer
+#: already feels beats a fresher piece that does not.
+#:
+#: `tema` was carved out of `encaje` and `actualidad` on 2026-07-30 rather than
+#: added on top, because weights that do not sum to one make MIN_SCORE mean
+#: something different from one release to the next.
 WEIGHTS = {
-    "actualidad": 0.15,
-    "dolor": 0.20,
-    "encaje": 0.20,
-    "hook": 0.15,
-    "evidencia": 0.10,
-    "visual": 0.10,
-    "conversion": 0.10,
+    "actualidad": 0.12,
+    "tema": 0.18,
+    "dolor": 0.18,
+    "encaje": 0.15,
+    "hook": 0.13,
+    "evidencia": 0.08,
+    "visual": 0.08,
+    "conversion": 0.08,
 }
 
 #: Below this, do not write a script. Tuned to be restrictive: the brief says a
@@ -264,6 +301,7 @@ def score(candidate: Candidate, *, judgments: dict[str, float] | None = None,
 
     parts = {
         "actualidad": _freshness(candidate.age_days(now)),
+        "tema": subject_score(candidate),
         # More distinct service terms means a tighter fit, saturating at four.
         "encaje": min(1.0, relevance_hits / 4),
         # Evidence is countable: how many sourced facts survived collection.
@@ -276,6 +314,34 @@ def score(candidate: Candidate, *, judgments: dict[str, float] | None = None,
 
     total = sum(parts[name] * weight for name, weight in WEIGHTS.items())
     return Score(total=round(total, 4), parts=parts)
+
+
+#: A headline is the claim; the summary is context. A story that is *about* AI
+#: says so in its title, so a hit there counts double.
+_TITLE_BONUS = 2
+
+
+def subject_score(candidate: Candidate) -> float:
+    """How much this is an AI story, minus how much it is an advert.
+
+    Returns 0..1. The floor is 0.35 rather than 0: a piece about administrative
+    burden with no mention of AI is still Autenia's business — that is what the
+    company sells against — it simply is not the subject Juan asked to favour.
+    """
+    text = candidate.haystack
+    title = _normalise(candidate.title)
+
+    hits = sum(1 for term in AI_TOPICS if _has_term(text, term))
+    hits += sum(_TITLE_BONUS for term in AI_TOPICS if _has_term(title, term))
+    # Four weighted hits is a piece squarely about AI; more adds nothing.
+    subject = min(1.0, hits / 4)
+
+    # Marketing language pulls it back down. A launch write-up can mention AI
+    # in every paragraph and still be an advert, and an advert is the one thing
+    # this channel cannot afford to repost.
+    promo = min(1.0, sum(1 for term in PROMOTIONAL if _has_term(text, term)) / 2)
+
+    return round(max(0.0, 0.35 + 0.65 * subject - 0.45 * promo), 4)
 
 
 def rank(candidates: list[Candidate], *,

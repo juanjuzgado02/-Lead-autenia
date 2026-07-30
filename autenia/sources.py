@@ -40,7 +40,26 @@ MAX_AGE_DAYS = editorial_window
 #: in a single query, returned zero results — the model reported that nothing
 #: satisfied every condition simultaneously. Variety across genuinely different
 #: pains matters more than precision within one of them.
+#: Two families, mixed on purpose.
+#:
+#: The AI block was added on 2026-07-30: Autenia wants to be the channel people
+#: hear about this from, and scoring it higher (``editorial.subject_score``)
+#: does nothing if the collector never brings any back. They are phrased around
+#: what a tool *does for a business*, not around who released it, because
+#: "novedades de IA" returns a wall of launch write-ups.
+#:
+#: The pain block stays. A week of nothing but model releases is a tech channel,
+#: not a consultancy's, and the viewer is a manager who does not follow this.
 SEARCH_ANGLES = (
+    # What AI can now do for a small company
+    "herramientas de inteligencia artificial para pequeñas empresas casos de uso",
+    "agentes de IA que atienden clientes resultados y datos",
+    "qué tareas de oficina puede hacer ya la inteligencia artificial",
+    "adopción de inteligencia artificial en pymes españolas cifras",
+    "inteligencia artificial aplicada a facturación contabilidad y administración",
+    "novedades de IA que cambian el trabajo de una empresa esta semana",
+    "riesgos y límites reales de la inteligencia artificial en empresas",
+    # What the viewer already suffers
     "horas que pierden las empresas españolas en tareas administrativas",
     "carga burocrática y administrativa que soportan las pymes en España",
     "facturación electrónica obligatoria pymes España plazos y coste de adaptación",
@@ -53,6 +72,9 @@ SEARCH_ANGLES = (
     "digitalización de la pyme española datos y porcentajes",
     "ciberseguridad en pymes españolas incidentes y coste",
 )
+
+#: How many of each family a run asks about, so a day is never all one thing.
+AI_ANGLES = 7
 
 #: How many angles one run searches. Each is a separate grounded call, because
 #: asking for all of them at once makes the model look for their intersection —
@@ -126,16 +148,29 @@ _EXTRACT_SCHEMA = {
 
 def angles_for(when: datetime | None = None,
                *, count: int = ANGLES_PER_RUN) -> tuple[str, ...]:
-    """The angles this run searches, rotating by the day.
+    """The angles this run searches: mostly AI, always one about the pain.
 
-    Rotation is the point. Asking the same three questions every morning means a
-    blank Tuesday is followed by an identical blank Wednesday; walking the list
-    means a quiet week still covers every pain Autenia can speak to.
+    Rotation is the point. Asking the same questions every morning means a
+    blank Tuesday is followed by an identical blank Wednesday; walking each
+    list means a quiet week still covers everything Autenia can speak to.
+
+    The mix is deliberate. AI is the subject Juan wants the channel known for,
+    so it gets the majority of each run — but a day that only asks about model
+    releases produces a tech channel, and the viewer is a manager who does not
+    follow any of that. One question about what they already suffer keeps the
+    other kind of story reachable.
     """
     day = (when or datetime.now(timezone.utc)).date().toordinal()
-    total = len(SEARCH_ANGLES)
-    start = (day * count) % total
-    return tuple(SEARCH_ANGLES[(start + i) % total] for i in range(min(count, total)))
+    ai, pain = SEARCH_ANGLES[:AI_ANGLES], SEARCH_ANGLES[AI_ANGLES:]
+
+    want_pain = 1 if count > 1 and pain else 0
+    want_ai = min(count - want_pain, len(ai))
+
+    start = (day * want_ai) % len(ai) if ai else 0
+    chosen = [ai[(start + i) % len(ai)] for i in range(want_ai)]
+    if want_pain:
+        chosen.append(pain[(day * want_pain) % len(pain)])
+    return tuple(chosen)
 
 
 async def _search_one(angle: str, days: int) -> tuple[str, list[dict], Usage]:

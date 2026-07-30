@@ -231,3 +231,68 @@ def test_freshness_reaches_zero_only_at_the_edge_of_the_window():
 def test_the_collector_and_the_score_share_one_window():
     from autenia import sources
     assert sources.MAX_AGE_DAYS == MAX_AGE_DAYS
+
+
+# -- AI as the favoured subject (2026-07-30) ------------------------------
+
+def test_an_ai_story_outscores_an_equivalent_one_without_ai():
+    """Juan's call: this channel should be where people hear about AI."""
+    ia = make("Los agentes de inteligencia artificial ya atienden clientes en pymes",
+              summary="Datos de adopción de IA en atención al cliente.",
+              facts=["el 30% de las pymes ya usa algún agente", "ahorro de 6 horas"])
+    sin_ia = make("Las pymes dedican demasiado tiempo a tareas administrativas",
+                  summary="Datos de carga administrativa.",
+                  facts=["el 30% del tiempo se va en administración", "6 horas semanales"])
+    assert score(ia).total > score(sin_ia).total
+
+
+def test_a_story_about_the_pain_is_still_publishable():
+    """The floor exists so favouring AI does not silently ban everything else.
+
+    What Autenia sells against is administrative drag; a good piece about it
+    must still be able to clear the bar on a day with no AI news.
+    """
+    from autenia.editorial import subject_score
+    sin_ia = make("La burocracia se come el 4% de la facturación de los autónomos",
+                  facts=["4% de la facturación", "12 horas al mes"])
+    assert subject_score(sin_ia) >= 0.35
+    assert score(sin_ia, judgments={"dolor": 0.9, "hook": 0.8,
+                                    "visual": 0.7, "conversion": 0.8}).total >= MIN_SCORE
+
+
+def test_ai_in_the_headline_counts_for_more_than_ai_in_passing():
+    """A story *about* AI says so in its title; a mention is not a subject."""
+    from autenia.editorial import subject_score
+    titular = make("ChatGPT ya redacta las facturas de estas empresas",
+                   summary="Un repaso al uso de la herramienta.")
+    de_pasada = make("Las empresas buscan ahorrar tiempo",
+                     summary="Algunas usan ChatGPT para ello.")
+    assert subject_score(titular) > subject_score(de_pasada)
+
+
+def test_a_product_launch_is_pulled_back_down():
+    """The 2026-07-29 problem must not return through the new front door.
+
+    Favouring AI as a subject would otherwise favour exactly the pile of vendor
+    launch write-ups that scored near zero for good reason.
+    """
+    from autenia.editorial import subject_score
+    noticia = make("La inteligencia artificial ya redacta contratos en las asesorías",
+                   facts=["el 40% de las asesorías lo usa"])
+    anuncio = make("Oracle lanza su nueva versión con inteligencia artificial",
+                   summary="Ya disponible. Precios y planes en su web.",
+                   facts=["disponible desde hoy"])
+    assert subject_score(anuncio) < subject_score(noticia)
+
+
+def test_the_weights_still_sum_to_one():
+    """MIN_SCORE only means something if the scale does not drift."""
+    from autenia.editorial import WEIGHTS
+    assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+
+
+def test_every_weighted_signal_is_actually_produced():
+    """A weight naming a part that score() never fills is silently ignored."""
+    from autenia.editorial import WEIGHTS
+    parts = score(make("Una noticia de inteligencia artificial")).parts
+    assert set(WEIGHTS) == set(parts)

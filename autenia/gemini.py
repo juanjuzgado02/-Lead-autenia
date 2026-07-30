@@ -335,8 +335,17 @@ def narration_text(script: dict) -> str:
 # Speech
 # --------------------------------------------------------------------------
 
-#: Gemini's prebuilt voices. Kore reads Spanish cleanly and neutrally.
-DEFAULT_VOICE = "Kore"
+#: Autenia's voice, chosen by ear on 2026-07-30.
+#:
+#: Juan listened to five male prebuilt voices reading the same script — Charon,
+#: Orus, Iapetus, Achird, Alnilam — and picked this one for being the clearest.
+#: It replaced Kore, which is female and was never a decision, just the first
+#: thing wired in.
+#:
+#: **Do not change this without him hearing the alternative.** It is the voice
+#: on every video the company publishes; a silent swap changes the brand.
+#: ``AUTENIA_VOICE_NAME`` overrides it for an experiment.
+DEFAULT_VOICE = "Iapetus"
 
 
 async def synthesize(text: str, *, voice: str = DEFAULT_VOICE,

@@ -76,7 +76,7 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 | `autenia/editorial.py` | Hard filters and scoring. |
 | `autenia/sources.py` | Grounded search, canonical URLs, publisher attribution. |
 | `autenia/gemini.py` | Model calls: judgement, script, TTS. |
-| `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default, ElevenLabs opt-in. |
+| `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default (voice `Iapetus`, chosen by ear), ElevenLabs opt-in. |
 | `autenia/render.py` | Script → 9:16 master, ffmpeg only. |
 | `autenia/assets.py` | Autenia's own footage library and coverage measurement. |
 | `autenia/images.py` | Generated scene photographs, cached on disk. ~0,03 € each. |
@@ -113,7 +113,8 @@ key the browser holds.
 
 **Provider keys:**
 - `GEMINI_API_KEY` — required: research, judgement, script and the default voice
-- `ELEVENLABS_API_KEY` — only with `AUTENIA_VOICE_PROVIDER=elevenlabs`
+- `ELEVENLABS_API_KEY` — only with `AUTENIA_VOICE_PROVIDER=elevenlabs`. Not
+  needed: the default voice is a free Gemini one Juan chose by listening
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — the review conversation
 - `UPLOAD_POST_API_KEY`, `UPLOAD_POST_USER` — publishing; the profile names the
   account whose TikTok, Instagram and YouTube are connected

@@ -13,13 +13,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # Tests only touch light modules (subtitles/hooks/translate/edit_builder
-      # and the cloud metering helpers), so we install just what they import
-      # instead of the full requirements.txt (faster-whisper/ultralytics/
-      # mediapipe are too heavy for CI). sqlalchemy is needed because
-      # tests/test_metering_free_plan.py imports cloud.metering.
+      # Tests only touch light modules (subtitles/hooks/translate/edit_builder,
+      # the cloud metering helpers and the autenia/ content store), so we install
+      # just what they import instead of the full requirements.txt
+      # (faster-whisper/ultralytics/mediapipe are too heavy for CI).
+      #   sqlalchemy      — cloud.metering and autenia.store
+      #   aiosqlite       — the content store's async SQLite driver
+      #   pytest-asyncio  — tests/test_store.py
+      #   python-dotenv   — core_config loads .env at import
       - name: Install test dependencies
-        run: pip install pytest pillow httpx pydantic sqlalchemy
+        run: pip install pytest pytest-asyncio pillow httpx pydantic sqlalchemy aiosqlite python-dotenv
       - name: Run tests
         run: pytest tests/ -v
 

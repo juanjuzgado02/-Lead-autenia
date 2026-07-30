@@ -3,9 +3,11 @@
 Fuente: https://auteniaai.com/ (consultada 2026-07-29) + decisiones de producto de
 la skill.
 
-> **Pendiente de confirmar por el usuario** — marcado con ⚠️ a lo largo del
-> documento. Hasta que confirme, usa el valor propuesto pero decláralo como
-> supuesto en el resumen final.
+> **Los valores marcados ⚠️ son supuestos adoptados, no preguntas abiertas.**
+> Úsalos y decláralos como supuesto en el resumen final. **No los preguntes otra
+> vez**: el usuario prefiere corregir un supuesto declarado a responder un
+> cuestionario. La única excepción es el material visual (§4), que no tiene valor
+> por defecto posible — sin él no hay faceless que valga.
 
 ---
 
@@ -142,13 +144,21 @@ de la web y con el formato vertical. Confirmar.
 | Modo | Coste marginal/vídeo | Claves necesarias |
 |---|---|---|
 | Clip Generator | ~0 € | Gemini |
-| **faceless** (por defecto) | ~0 € + voz | Gemini, ElevenLabs |
+| **faceless con voz Gemini** (por defecto) | **~0 €** | **Solo Gemini** |
+| faceless con voz ElevenLabs | ~0 € + voz | Gemini, ElevenLabs |
 | `lowcost` avatar | ~$0,65 | Gemini, ElevenLabs, fal.ai |
 | `premium` avatar | ~$2,00 | Gemini, ElevenLabs, fal.ai |
 
-Objetivo a ritmo diario (30 vídeos/mes) en faceless: **por debajo de 10 €/mes**,
-dominado por ElevenLabs. Los avatares se usan solo como experimento consciente, no
-como modo por defecto.
+**Verificado el 2026-07-29:** la misma clave de Gemini expone TTS
+(`gemini-2.5-flash-preview-tts`) y funciona en español; se generaron 27 s de
+narración a coste cero. **ElevenLabs ya no es bloqueante.** `autenia/voice.py`
+abstrae el proveedor: `AUTENIA_VOICE_PROVIDER=gemini|elevenlabs` cambia de uno a
+otro sin tocar código, así que la decisión se toma escuchando ambos, no de
+antemano.
+
+Objetivo a ritmo diario (30 vídeos/mes) en faceless con voz Gemini: **0 €**. Con
+ElevenLabs, por debajo de 10 €/mes. Los avatares se usan solo como experimento
+consciente, no como modo por defecto.
 
 ⚠️ **Límite de gasto mensual:** sin confirmar. Propuesta por defecto: **25 €/mes**,
 con parada dura antes de llamar a cualquier proveedor de vídeo si se supera.
@@ -166,15 +176,28 @@ con parada dura antes de llamar a cualquier proveedor de vídeo si se supera.
 
 ---
 
-## 10. Preguntas abiertas para el usuario
+## 10. Supuestos adoptados y bloqueadores reales
 
-Antes de la primera producción real, resuelve:
+**Supuestos en vigor.** Trabaja con ellos, decláralos en el resumen final, no los
+preguntes:
 
-1. ¿Qué servicio empujamos primero? (por defecto: Agentes IA)
-2. ¿Hay capturas o demos propias utilizables, aunque sean anonimizadas?
-3. ¿Tuteo o usted?
-4. ¿Límite de gasto mensual? (por defecto: 25 €)
-5. ¿Horario y días de publicación?
-6. ¿Cuentas de TikTok / Instagram / YouTube ya creadas y con acceso?
+| Decisión | Valor adoptado |
+|---|---|
+| Servicio a empujar primero | Agentes IA — demostración visual más inmediata y ciclo de venta más corto |
+| Registro | Tuteo |
+| Límite de gasto mensual | 25 € con parada dura |
+| Cadencia | Un vídeo al día como objetivo; días en blanco preferibles a piezas mediocres |
+| Horario | Sin programar. El ciclo diario queda manual hasta que el usuario dé una hora |
+
+**Bloqueadores reales.** No tienen valor por defecto y solo el usuario puede
+resolverlos. Pídelos una vez, con claridad, y sigue avanzando en lo que no dependa
+de ellos:
+
+1. **Material visual propio** — capturas o grabaciones de agentes conversando,
+   cuadros de mando y automatizaciones, aunque estén anonimizadas. Sin esto el
+   faceless es stock genérico. Es el bloqueador más serio del proyecto.
+2. **Logo** en PNG con transparencia.
+3. **Las cuatro claves** y las tres cuentas sociales conectadas en Upload-Post.
+4. **Servidor 24/7** y sus specs.
 
 No preguntes nada que ya esté decidido en este documento.

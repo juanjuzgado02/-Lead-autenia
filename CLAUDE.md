@@ -114,12 +114,46 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 - `VITE_API_URL` - Production API URL override
 - `VITE_OPENPANEL_API_URL`, `VITE_OPENPANEL_CLIENT_ID` - Optional product analytics, read at **build** time. Unset (the default, including every self-hosted build) means no analytics is initialised and no third-party script is loaded. `dashboard/index.html` also gates reporting on an `ANALYTICS_HOSTS` allowlist, so a build carrying credentials stays inert on any other host.
 
-**Client-side (localStorage, encrypted):**
+**Provider keys — server-side only in this fork (see Internal mode below):**
 - `GEMINI_API_KEY` - Google Gemini API key (required)
-- `ELEVENLABS_API_KEY` - ElevenLabs API key for voice dubbing (optional)
-- `UPLOAD_POST_API_KEY` - Upload-Post API key for social posting (optional)
+- `ELEVENLABS_API_KEY` - ElevenLabs API key for voice/dubbing
+- `UPLOAD_POST_API_KEY` - Upload-Post API key for social posting
+- `FAL_KEY` - fal.ai, only for the avatar video modes; the faceless default never calls it
 
-> API keys are stored encrypted in the browser and sent via headers only when needed. Never stored server-side.
+### Internal mode (`AUTENIA_INTERNAL_MODE`, default **on**)
+
+This repository is Autenia's private, single-user deployment, not the multi-tenant
+SaaS upstream. `core_config.py` is the one place that resolves configuration, and
+in internal mode:
+
+- **Every provider key comes from the server's `.env`.** The browser never
+  receives or stores one; the `X-Gemini-Key`, `X-ElevenLabs-Key`, `X-Fal-Key` and
+  `X-Upload-Post-Key` headers are ignored rather than trusted, and the dashboard
+  clears any key an older build left in `localStorage`. A key that ever sat in
+  browser storage should be **rotated at the provider**, not migrated.
+- **The public galleries are closed.** `/gallery`, `/video/{id}`,
+  `/api/saasshorts/gallery` and `/api/saasshorts/actor-gallery` return 404 at the
+  handler, not merely by being unlinked from the UI; uploads to the gallery are
+  refused too. Unapproved drafts are brand material and are not world-readable.
+- **CORS is restricted** to `AUTENIA_ALLOWED_ORIGINS` (local dev servers by
+  default) instead of the upstream `*` wildcard.
+- **Publishing is dry-run** until `AUTENIA_PUBLISH_DRY_RUN=false` is set
+  explicitly. Any unset or malformed value keeps it on.
+
+Set `AUTENIA_INTERNAL_MODE=false` (and `VITE_AUTENIA_INTERNAL_MODE=false` for the
+dashboard build) to get the upstream bring-your-own-key behaviour back.
+
+**Never set `BILLING_ENABLED`** — it activates the separately-licensed `cloud/`
+package. `core_config.validate_startup()` refuses to boot if it is on. Do not
+import from `cloud/` in new code.
+
+**Autenia limits:** `AUTENIA_MAX_COST_PER_VIDEO` (0.50 €),
+`AUTENIA_MAX_COST_PER_MONTH` (25 €), `AUTENIA_MAX_DURATION_S` (55),
+`AUTENIA_TZ` (`Europe/Madrid`), `AUTENIA_DB_PATH`.
+
+> Never log a secret. `core_config.mask()` renders one safely and
+> `core_config.sanitize()` masks credentials in a payload before it is persisted
+> or printed — use it on every provider request and response.
 
 ## Tech Stack
 - **Backend:** Python 3.11, FastAPI, google-genai, faster-whisper, ultralytics (YOLOv8), mediapipe, opencv-python, yt-dlp, FFmpeg, httpx

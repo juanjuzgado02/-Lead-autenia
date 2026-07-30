@@ -10,7 +10,9 @@ export default defineConfig([
     files: ['**/*.{js,jsx}'],
     extends: [
       js.configs.recommended,
-      reactHooks.configs.flat.recommended,
+      // 'recommended-latest' is the flat-config export in eslint-plugin-react-hooks 5.x.
+      // (`configs.flat.recommended` only exists in 6.x and threw on load.)
+      reactHooks.configs['recommended-latest'],
       reactRefresh.configs.vite,
     ],
     languageOptions: {
@@ -23,7 +25,19 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // caughtErrors defaulted to 'none' in ESLint 8 and to 'all' in 9. This
+      // codebase is written against the old default (`catch (e) {}` to swallow
+      // an error is used deliberately), so keep it explicit rather than
+      // annotating every call site.
+      'no-unused-vars': ['error', {
+        varsIgnorePattern: '^[A-Z_]',
+        caughtErrors: 'none',
+      }],
     },
+  },
+  {
+    // Build tooling runs in Node, not the browser.
+    files: ['*.config.js', 'vite-plugin-*.js', 'seo/**/*.js'],
+    languageOptions: { globals: globals.node },
   },
 ])

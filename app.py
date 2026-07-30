@@ -23,6 +23,8 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3, list_actor_gallery, upload_video_to_gallery, list_video_gallery
+import core_config
+from core_config import settings as autenia
 
 load_dotenv()
 
@@ -91,6 +93,10 @@ async def resolve_gemini(request: Request) -> Optional[str]:
         if managed_keys.has_active_entitlement(user):
             return managed_keys.gemini_key()
         return None
+    if autenia.internal_mode:
+        # Single-user deployment: the key lives in the server's .env. A browser
+        # header is ignored rather than trusted.
+        return autenia.gemini_api_key
     header = request.headers.get("X-Gemini-Key")
     if header:
         return header
@@ -111,9 +117,40 @@ async def resolve_upload_post(request: Request, body_key: Optional[str] = None):
             profile = await cloud.social_profiles.ensure_profile(user)
             return managed_keys.upload_post_key(), profile
         return None, None
+    if autenia.internal_mode:
+        return autenia.upload_post_api_key, None
     header = request.headers.get("X-Upload-Post-Key")
     key = header or body_key or os.environ.get("UPLOAD_POST_API_KEY")
     return key, None
+
+
+def resolve_elevenlabs(header_key: Optional[str]) -> Optional[str]:
+    """ElevenLabs key for a request. Internal mode ignores the browser header."""
+    if autenia.internal_mode:
+        return autenia.elevenlabs_api_key
+    return header_key or os.environ.get("ELEVENLABS_API_KEY")
+
+
+def resolve_fal(header_key: Optional[str]) -> Optional[str]:
+    """fal.ai key for a request. Internal mode ignores the browser header.
+
+    Only the avatar video modes need this; the faceless default does not.
+    """
+    if autenia.internal_mode:
+        return autenia.fal_key
+    return header_key or os.environ.get("FAL_KEY")
+
+
+def deny_if_internal():
+    """Close a public-facing route in Autenia's internal deployment.
+
+    Autenia's videos carry its own brand and, before approval, unpublished
+    drafts. Nothing here is meant to be world-readable, so the read routes deny
+    at the handler — not merely by being unlinked from the dashboard. 404 rather
+    than 403 so a direct call learns nothing about what exists.
+    """
+    if autenia.internal_mode:
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 def gemini_missing_error():
@@ -962,6 +999,12 @@ async def _settle_reservation(job_id):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail fast on configuration that is present but wrong; report what is
+    # merely absent so the phases that don't need it still boot.
+    for warning in core_config.validate_startup(core_config.FEATURE_REQUIREMENTS):
+        print(f"⚠️  {warning}")
+    if autenia.internal_mode:
+        print("🔒 Autenia internal mode: public galleries closed, keys resolved server-side")
     # Rehydrate finished jobs from disk before serving (survives restarts).
     _recover_jobs_from_disk()
     # Re-enqueue jobs that were mid-processing when we stopped (redeploy). Their
@@ -982,10 +1025,18 @@ if BILLING_ENABLED:
     cloud.setup_sync(app)
 
 # Enable CORS for frontend. Cloud mode locks this down to the configured origins;
-# self-host keeps the permissive wildcard it has always used.
+# Autenia internal mode does the same (the server holds the credentials now, so a
+# wildcard would let any page drive them). Upstream self-host keeps its wildcard.
+if BILLING_ENABLED:
+    _allowed_origins = cloud.settings.allowed_origins
+elif autenia.internal_mode:
+    _allowed_origins = autenia.allowed_origins
+else:
+    _allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cloud.settings.allowed_origins if BILLING_ENABLED else ["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2355,8 +2406,9 @@ async def translate_clip(
     x_elevenlabs_key: Optional[str] = Header(None, alias="X-ElevenLabs-Key")
 ):
     """Translate a video clip to a different language using ElevenLabs dubbing."""
+    x_elevenlabs_key = resolve_elevenlabs(x_elevenlabs_key)
     if not x_elevenlabs_key:
-        raise HTTPException(status_code=400, detail="Missing X-ElevenLabs-Key header")
+        raise HTTPException(status_code=400, detail="ElevenLabs API key is not configured")
 
     await _ensure_job_files(req.job_id, request)
     if req.job_id not in jobs:
@@ -3273,9 +3325,9 @@ async def saasshorts_actor_options(
 ):
     """Generate multiple actor image options for the user to choose from."""
     await require_managed_entitlement(request)
-    fal_key = x_fal_key
+    fal_key = resolve_fal(x_fal_key)
     if not fal_key:
-        raise HTTPException(status_code=400, detail="Missing fal.ai API Key")
+        raise HTTPException(status_code=400, detail="fal.ai API key is not configured")
 
     try:
         job_id = str(uuid.uuid4())
@@ -3315,6 +3367,7 @@ async def saasshorts_actor_options(
 @app.get("/api/saasshorts/gallery")
 async def saasshorts_video_gallery(limit: int = 50):
     """List all UGC videos from the public gallery."""
+    deny_if_internal()
     try:
         loop = asyncio.get_running_loop()
         videos = await loop.run_in_executor(None, list_video_gallery, limit)
@@ -3418,6 +3471,7 @@ async def saasshorts_post_to_socials(req: SaaSPostRequest, request: Request):
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery_html_page():
     """SEO gallery page with all generated UGC videos."""
+    deny_if_internal()
     import html as html_mod
     loop = asyncio.get_running_loop()
     videos = await loop.run_in_executor(None, list_video_gallery, 100)
@@ -3489,6 +3543,7 @@ h1{{font-size:28px;font-weight:700;padding:40px 20px 0;text-align:center}}
 @app.get("/video/{video_id}", response_class=HTMLResponse)
 async def video_html_page(video_id: str):
     """SEO individual video page with og:video meta tags."""
+    deny_if_internal()
     import html as html_mod
     loop = asyncio.get_running_loop()
     videos = await loop.run_in_executor(None, list_video_gallery, 200)
@@ -3571,6 +3626,7 @@ h1{{font-size:22px;font-weight:700;margin-bottom:8px}}
 @app.get("/api/saasshorts/actor-gallery")
 async def saasshorts_actor_gallery():
     """List all previously generated actor images from public S3."""
+    deny_if_internal()
     try:
         loop = asyncio.get_running_loop()
         images = await loop.run_in_executor(None, list_actor_gallery)
@@ -3600,13 +3656,13 @@ async def saasshorts_generate(
 ):
     """Generate a SaaS UGC video from a script. Returns a job_id for polling."""
     await require_managed_entitlement(request)
-    fal_key = x_fal_key
-    elevenlabs_key = x_elevenlabs_key
+    fal_key = resolve_fal(x_fal_key)
+    elevenlabs_key = resolve_elevenlabs(x_elevenlabs_key)
 
     if not fal_key:
-        raise HTTPException(status_code=400, detail="Missing fal.ai API Key (X-Fal-Key header)")
+        raise HTTPException(status_code=400, detail="fal.ai API key is not configured")
     if not elevenlabs_key:
-        raise HTTPException(status_code=400, detail="Missing ElevenLabs API Key (X-ElevenLabs-Key header)")
+        raise HTTPException(status_code=400, detail="ElevenLabs API key is not configured")
 
     # Support retry: reuse output_dir so cached assets (image, voice, head, broll) are kept
     reused = False
@@ -3713,7 +3769,7 @@ async def saasshorts_generate(
 
                 # Upload to public gallery — opt-in only: the metadata carries
                 # the user's product name, URL and full script.
-                if req.share_to_gallery:
+                if req.share_to_gallery and not autenia.internal_mode:
                     try:
                         gallery_meta = {
                             "title": req.script.get("title", "Untitled"),
@@ -3776,6 +3832,7 @@ async def saasshorts_voices(
     x_elevenlabs_key: Optional[str] = Header(None, alias="X-ElevenLabs-Key"),
 ):
     """List available ElevenLabs voices."""
+    x_elevenlabs_key = resolve_elevenlabs(x_elevenlabs_key)
     if x_elevenlabs_key:
         try:
             loop = asyncio.get_event_loop()

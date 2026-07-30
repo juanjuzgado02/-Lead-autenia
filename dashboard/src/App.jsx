@@ -22,6 +22,7 @@ import ProfileMenu from './components/ProfileMenu';
 import Modal from './components/ui/Modal';
 import { useAuth } from './contexts/AuthContext';
 import { apiFetch, apiJson, QuotaError } from './lib/api';
+import { INTERNAL_MODE, purgeLegacyBrowserKeys } from './config';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
 // This is better than plain Base64 but still client-side.
@@ -182,15 +183,21 @@ function App() {
   // the ephemeral local /videos/ files have been cleaned up (e.g. after a reload).
   const [durableClips, setDurableClips] = useState({});
 
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
+  // In internal mode the server resolves every key from its own .env, so the
+  // browser holds nothing: these stay empty and the request headers are omitted.
+  const [apiKey, setApiKey] = useState(
+    () => (INTERNAL_MODE ? '' : localStorage.getItem('gemini_key') || '')
+  );
   // Social API State - Load encrypted or plain
   const [uploadPostKey, setUploadPostKey] = useState(() => {
+    if (INTERNAL_MODE) return '';
     const stored = localStorage.getItem('uploadPostKey_v3');
     if (stored) return decrypt(stored);
     return '';
   });
   // ElevenLabs API State - Load encrypted
   const [elevenLabsKey, setElevenLabsKey] = useState(() => {
+    if (INTERNAL_MODE) return '';
     const stored = localStorage.getItem('elevenLabsKey_v1');
     if (stored) return decrypt(stored);
     return '';
@@ -198,10 +205,14 @@ function App() {
 
   // fal.ai API State - Load encrypted
   const [falKey, setFalKey] = useState(() => {
+    if (INTERNAL_MODE) return '';
     const stored = localStorage.getItem('falKey_v1');
     if (stored) return decrypt(stored);
     return '';
   });
+
+  // Names of keys this browser was still holding from a BYOK build, if any.
+  const [purgedKeys, setPurgedKeys] = useState([]);
 
   const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
   const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
@@ -425,14 +436,22 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, status, results, activeTab, noSource, projectState]);
 
+  // Clear any key an earlier BYOK build left in this browser. Not migrated to
+  // the server on purpose — a key that sat in localStorage should be rotated.
+  useEffect(() => {
+    const purged = purgeLegacyBrowserKeys();
+    if (purged.length) setPurgedKeys(purged);
+  }, []);
+
   useEffect(() => {
     // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
     // For now keeping gemini plain for compatibility unless requested.
+    if (INTERNAL_MODE) return;
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
   }, [apiKey]);
 
   useEffect(() => {
-    if (uploadPostKey) {
+    if (!INTERNAL_MODE && uploadPostKey) {
       localStorage.setItem('uploadPostKey_v3', encrypt(uploadPostKey));
     }
     if (uploadUserId) {
@@ -441,12 +460,14 @@ function App() {
   }, [uploadPostKey, uploadUserId]);
 
   useEffect(() => {
+    if (INTERNAL_MODE) return;
     if (elevenLabsKey) {
       localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey));
     }
   }, [elevenLabsKey]);
 
   useEffect(() => {
+    if (INTERNAL_MODE) return;
     if (falKey) {
       localStorage.setItem('falKey_v1', encrypt(falKey));
     }
@@ -677,7 +698,9 @@ function App() {
       { id: 'dashboard', ord: '01', icon: LayoutDashboard, label: 'Clip Generator' },
       { id: 'saasshorts', ord: '02', icon: Sparkles, label: 'AI Shorts', byok: true },
       { id: 'ai-agent', ord: '03', icon: Bot, label: 'AI Agent', byok: true },
-      { id: 'ugc-gallery', ord: '04', icon: LayoutGrid, label: 'UGC Gallery' },
+      // The public gallery is off in Autenia's internal deployment: drafts are
+      // unapproved brand material, so nothing is world-readable.
+      ...(INTERNAL_MODE ? [] : [{ id: 'ugc-gallery', ord: '04', icon: LayoutGrid, label: 'UGC Gallery' }]),
       { id: 'thumbnails', ord: '05', icon: Image, label: 'YouTube Studio' },
       ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '06', icon: History, label: 'History' }] : []),
       { id: 'settings', ord: '07', icon: Settings, label: 'Settings' },
@@ -880,7 +903,10 @@ function App() {
                   <h1 className="font-display lowercase text-2xl text-ink">Settings</h1>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted mt-1">
-                  <Shield size={12} className="text-ok shrink-0" /> Privacy: keys only live in your browser (sent to backend just to process)
+                  <Shield size={12} className="text-ok shrink-0" />
+                  {INTERNAL_MODE
+                    ? 'Privacy: keys live in the server .env — never in this browser'
+                    : 'Privacy: keys only live in your browser (sent to backend just to process)'}
                 </div>
               </div>
               {isManaged ? (
@@ -925,6 +951,43 @@ function App() {
                   <button onClick={() => setShowPlanChoice(true)} className="btn-primary py-2 px-4 text-sm">
                     <Sparkles size={16} /> Choose a plan
                   </button>
+                </div>
+              ) : INTERNAL_MODE ? (
+                <div className="card p-6 mb-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-input bg-paper3 flex items-center justify-center shrink-0">
+                        <Shield size={16} className="text-brass" />
+                      </div>
+                      <h2 className="text-base font-medium text-ink lowercase">Server-managed credentials</h2>
+                    </div>
+                    <span className="badge-ok">Internal</span>
+                  </div>
+                  <p className="text-xs text-muted mb-4 leading-relaxed">
+                    This deployment reads every API key from the server&apos;s <code>.env</code>. There is
+                    nothing to enter here, and the browser never receives or stores a credential.
+                    To change a key, edit <code>.env</code> on the server and restart.
+                  </p>
+                  <ul className="text-xs text-muted space-y-1 mb-2">
+                    <li><code>GEMINI_API_KEY</code> — research, script and titles</li>
+                    <li><code>ELEVENLABS_API_KEY</code> — Spanish voiceover</li>
+                    <li><code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code> — review and approval</li>
+                    <li><code>UPLOAD_POST_API_KEY</code> — publishing</li>
+                  </ul>
+                  {purgedKeys.length > 0 && (
+                    <div className="mt-4 px-4 py-3 rounded-card border border-rule bg-paper2 flex items-start gap-3">
+                      <AlertTriangle size={16} className="text-warn shrink-0 mt-0.5" />
+                      <div className="text-xs text-ink2 leading-relaxed">
+                        <p className="font-medium text-ink mb-1">
+                          Removed {purgedKeys.length} API key{purgedKeys.length > 1 ? 's' : ''} left in this browser.
+                        </p>
+                        <p className="text-muted">
+                          They were cleared, not migrated. Rotate them at the provider — a key
+                          that lived in browser storage should not be reused.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1224,7 +1287,7 @@ function App() {
           )}
 
           {/* View: UGC Gallery */}
-          {activeTab === 'ugc-gallery' && (
+          {!INTERNAL_MODE && activeTab === 'ugc-gallery' && (
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="max-w-6xl mx-auto p-6 md:p-8">
                 <UGCGallery />

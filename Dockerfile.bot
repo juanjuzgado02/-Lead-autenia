@@ -1,0 +1,27 @@
+# Autenia's review bot and daily cycle.
+#
+# Built on the backend image because the render needs its ffmpeg: composing the
+# 9:16 master on a bare host fails with "ffmpeg is not on PATH", which is what a
+# host-run bot does the moment a script is approved.
+#
+# Long polling means no inbound ports, no domain and no certificate.
+FROM openshorts-backend:latest
+
+# The content store's async SQLite driver. In requirements.txt, but the base
+# image predates it. The base runs as appuser, who does not own /opt/venv, so
+# install as root and drop back straight away.
+USER root
+RUN pip install --no-cache-dir aiosqlite==0.20.0
+USER appuser
+
+WORKDIR /app
+
+# The database, rendered videos and the footage library all live on a mounted
+# volume, so restarting the container never loses a script awaiting review.
+ENV AUTENIA_DB_PATH=/data/autenia.db \
+    AUTENIA_WORK_DIR=/data/videos \
+    AUTENIA_LIBRARY_DIR=/data/library \
+    PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "autenia_bot.py"]
+CMD ["listen"]

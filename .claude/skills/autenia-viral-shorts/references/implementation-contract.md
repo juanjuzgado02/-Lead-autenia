@@ -11,34 +11,77 @@ aquí choca con el código actual, gana este documento y se actualiza
 Cada fase es un corte vertical entregable. **No empieces una fase sin que la anterior
 cumpla sus criterios.**
 
-### Fase 0 — Base segura (sin coste de API)
+### Fase 0 — Base segura (sin coste de API) — ✅ hecha salvo autenticación
 
-| Entregable | Criterio de aceptación |
-|---|---|
-| `core_config.py` nuevo en la raíz | Arranque falla con mensaje claro si falta una variable requerida. No importa nada de `cloud/`. Ningún valor secreto aparece en logs |
-| `CLAUDE.md` actualizado | La sección de claves refleja el modelo server-side. Sin contradicción con la skill |
-| Rutas públicas cerradas | `GET /gallery`, `/video/{id}`, `/api/saasshorts/gallery`, `/api/saasshorts/actor-gallery` devuelven 404/403 con llamada directa. Test que lo demuestra |
-| Galería fuera del dashboard | Sin navegación ni componentes de galería. `npm run build` y `npm run lint` limpios |
-| Claves fuera del frontend | Cero `localStorage` de claves en `App.jsx`. Cabeceras `X-*-Key` retiradas o ignoradas. Test de resolución de secretos que no los expone |
-| Autenticación delante de la UI | Ninguna interfaz desplegada accesible sin credencial. CORS restringido |
+| Entregable | Criterio de aceptación | Estado |
+|---|---|---|
+| `core_config.py` nuevo en la raíz | Arranque falla con mensaje claro si falta una variable requerida. No importa nada de `cloud/`. Ningún valor secreto aparece en logs | ✅ |
+| `CLAUDE.md` actualizado | La sección de claves refleja el modelo server-side. Sin contradicción con la skill | ✅ |
+| Rutas públicas cerradas | `GET /gallery`, `/video/{id}`, `/api/saasshorts/gallery`, `/api/saasshorts/actor-gallery` devuelven 404/403 con llamada directa. Test que lo demuestra | ✅ 404 |
+| Galería fuera del dashboard | Sin navegación ni componentes de galería. `npm run build` y `npm run lint` limpios | ⚠️ build ✅; lint arranca por primera vez pero deja 17 problemas preexistentes ajenos a la fase (audit §9) |
+| Claves fuera del frontend | Cero `localStorage` de claves en `App.jsx`. Cabeceras `X-*-Key` retiradas o ignoradas. Test de resolución de secretos que no los expone | ✅ + purga de claves antiguas |
+| Autenticación delante de la UI | Ninguna interfaz desplegada accesible sin credencial. CORS restringido | ⚠️ CORS ✅; **autenticación pendiente** — bloqueante antes del VPS, no en local |
 
-### Fase 1 — Almacén y estados
+El criterio de lint se redefine así: **el lint debe ejecutar y el código nuevo debe
+salir limpio.** Exigir cero problemas en todo el repositorio obligaría a reescribir
+componentes sin relación con la fase; esa limpieza va en su propio commit.
 
-| Entregable | Criterio |
-|---|---|
-| SQLite propio (SQLAlchemy async + aiosqlite) | Independiente de `cloud/`. Esquema versionado. Contenido y versión persisten antes de cualquier gasto |
-| Máquina de estados (§3) | Transiciones ilegales rechazadas con test |
-| Registro de coste | Coste estimado y real por proveedor, contenido y versión. Un intento fallido cuenta como coste consumido |
+### Fase 1 — Almacén y estados — ✅ hecha (2026-07-29)
 
-### Fase 2 — Motor editorial (coste ínfimo)
+| Entregable | Criterio | Estado |
+|---|---|---|
+| SQLite propio (SQLAlchemy async + aiosqlite) | Independiente de `cloud/`. Esquema versionado. Contenido y versión persisten antes de cualquier gasto | ✅ `autenia/models.py`, `autenia/store.py` |
+| Máquina de estados (§3) | Transiciones ilegales rechazadas con test | ✅ `autenia/states.py`; una prueba recorre el grafo y demuestra que no hay ruta a `publicado` sin pasar por `en_revision` |
+| Registro de coste | Coste estimado y real por proveedor, contenido y versión. Un intento fallido cuenta como coste consumido | ✅ Céntimos enteros, no float |
 
-| Entregable | Criterio |
-|---|---|
-| Recolección de candidatos | Persiste título, URL canónica, editor, fecha de publicación, fecha de consulta y fragmentos factuales |
-| Filtros duros | Descarta duplicados, política/polémica y piezas sin relación demostrable con Autenia. Test por cada exclusión del brief §6 |
-| Puntuación barata | Actualidad, dolor, encaje, hook, evidencia, potencial visual, conversión, coste. Sin llamadas caras |
-| Guion fundamentado | Separa hecho de opinión y conserva fuentes |
-| Preflight | Verifica duración, afirmaciones, derechos de uso, coste estimado y caché **antes** de renderizar |
+Detalles que conviene no re-descubrir: el gasto duplicado se bloquea con un
+índice único parcial además del chequeo en código, y el presupuesto mensual se
+comprueba **al entrar** en `renderizando`.
+
+### Fase 2 — Motor editorial (coste ínfimo) — ✅ núcleo hecho (2026-07-29)
+
+| Entregable | Criterio | Estado |
+|---|---|---|
+| Recolección de candidatos | Persiste título, URL canónica, editor, fecha de publicación, fecha de consulta y fragmentos factuales | ✅ `autenia/sources.py`, probado con búsqueda real |
+| Filtros duros | Descarta duplicados, política/polémica y piezas sin relación demostrable con Autenia. Test por cada exclusión del brief §6 | ✅ `autenia/editorial.py`, una prueba por exclusión |
+| Puntuación barata | Actualidad, dolor, encaje, hook, evidencia, potencial visual, conversión, coste. Sin llamadas caras | ✅ Señales deterministas gratis; las de juicio, en **una sola** llamada para todo el lote |
+| Guion fundamentado | Separa hecho de opinión y conserva fuentes | ✅ `autenia/gemini.py` con esquema JSON forzado por la API |
+| Preflight | Verifica duración, afirmaciones, derechos de uso, coste estimado y caché **antes** de renderizar | ✅ `autenia/preflight.py`; devuelve todos los problemas juntos, no el primero |
+
+Sobre la recolección, medido el 2026-07-29:
+
+- **Búsqueda y salida estructurada son incompatibles.** `google_search` con
+  `responseMimeType: application/json` devuelve 400 (`Tool use with a response
+  mime type ... is unsupported`). Hacen falta dos llamadas: búsqueda en prosa y
+  extracción estructurada después.
+- **Las URLs de grounding son redirecciones** de
+  `vertexaisearch.cloud.google.com`, no direcciones canónicas. Hay que
+  resolverlas siguiendo el redirect; una fuente que no se puede citar por su URL
+  real no es una fuente.
+- **El modelo se inventa URLs si le dejas.** La extracción solo puede usar las
+  URLs que ya resolvimos; cualquier otra se descarta.
+- **Busca el problema, no la tecnología.** Los ángulos tecnológicos ("agentes de
+  IA para empresas") devolvieron autopromoción de una consultora, regulación del
+  NIST y un lanzamiento de Oracle: todo puntuado cerca de cero, correctamente.
+  Cambiados a ángulos de dolor y evidencia ("estudio horas perdidas en tareas
+  administrativas"), la misma búsqueda encontró un dato usable —introducir un
+  pedido a mano consume 20-30 minutos— que puntuó 1,00 en dolor, visual y
+  conversión. **Si el sistema da días en blanco seguidos, revisa los ángulos
+  antes de tocar el umbral.** Bajar el listón es lo que el brief prohíbe.
+
+Sobre el guion, aprendido al probarlo contra la API real:
+
+- **Pide palabras, no segundos.** El modelo estima fatal la duración hablada:
+  con "30 segundos" escribió 140 palabras (54 s). Con un presupuesto de palabras
+  explícito, 68 palabras → 27,2 s reales. La conversión 2,6 palabras/segundo
+  falla un 4%.
+- **Toda cifra es un hecho.** El modelo marcaba como "opinion" las cifras
+  derivadas ("la mitad de ocho son cuatro"). El preflight lo cazó; el prompt
+  ahora lo prohíbe explícitamente.
+- **El hook se repetía como escena 1**, y el vídeo habría dicho la misma frase
+  dos veces. El preflight no ve esto: hay que pedirlo en el prompt.
+- **Los planos visuales se van a animaciones y metáforas** ("un reloj girando",
+  "un empleado frustrado") si no se exige captura de pantalla concreta.
 
 ### Fase 3 — Render faceless
 
@@ -71,7 +114,18 @@ cumpla sus criterios.**
 | Registro | Petición y respuesta saneadas, id externo y estado por plataforma |
 | Pruebas simuladas | 2xx, 4xx, 5xx y timeout cubiertos sin envío real |
 
-### Fase 6 — Despliegue
+### Fase 6 — Ciclo diario automático
+
+| Entregable | Criterio |
+|---|---|
+| Programador | Un disparo al día en `AUTENIA_TZ`. No arranca sin `AUTENIA_PUBLISH_TIME` ni con `AUTENIA_SCHEDULER_ENABLED=false` |
+| Exclusión mutua | Si hay un ciclo en revisión o renderizando, el nuevo se salta y se registra el motivo. Test explícito |
+| Día sin candidato | Ningún candidato supera los umbrales → avisa por Telegram y termina **sin producir**. No rellena |
+| Límite mensual | Comprobado antes de empezar el ciclo, no a mitad |
+| Registro | Cada ejecución (lanzada, saltada, fallida) queda con su motivo |
+| Parada | `AUTENIA_SCHEDULER_ENABLED=false` detiene el ciclo y se dice en el resumen |
+
+### Fase 7 — Despliegue
 
 | Entregable | Criterio |
 |---|---|
@@ -91,8 +145,8 @@ desde el navegador. Nunca impresas en logs.**
 
 | Variable | Fase | Notas |
 |---|---|---|
-| `GEMINI_API_KEY` | 2 | Guion, investigación, títulos. Tier gratuito suficiente |
-| `ELEVENLABS_API_KEY` | 3 | Voz en español |
+| `GEMINI_API_KEY` | 2 | Guion, investigación, títulos **y voz por defecto**. Tier gratuito suficiente |
+| `ELEVENLABS_API_KEY` | opcional | Solo si `AUTENIA_VOICE_PROVIDER=elevenlabs`. La voz por defecto es Gemini TTS, verificada en español y gratuita |
 | `AUTENIA_DB_PATH` | 1 | Ruta del SQLite. Volumen persistente privado |
 | `AUTENIA_PUBLISH_DRY_RUN` | 5 | **Por defecto `true`.** Cambiar solo con autorización explícita |
 
@@ -102,9 +156,17 @@ desde el navegador. Nunca impresas en logs.**
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | 4 | Bot nuevo de @BotFather. No reutilices el de `cloud/alerts.py` |
 | `TELEGRAM_CHAT_ID` | 4 | Lista blanca. Un solo chat autorizado |
-| `TELEGRAM_WEBHOOK_SECRET` | 4 | Verificación de firma del webhook |
+| `TELEGRAM_WEBHOOK_SECRET` | 4 | **Solo con webhook.** El MVP usa long polling y no la necesita |
 | `UPLOAD_POST_API_KEY` | 5 | 10 subidas/mes gratis |
 | `FAL_KEY` | opcional | **Solo** para experimentos de avatar. Faceless no la necesita |
+
+### Modo y superficie (fase 0, ya implementadas)
+
+| Variable | Por defecto | Notas |
+|---|---|---|
+| `AUTENIA_INTERNAL_MODE` | `true` | Cierra galerías, ignora cabeceras `X-*-Key`, restringe CORS. `false` devuelve el comportamiento BYOK de upstream |
+| `AUTENIA_ALLOWED_ORIGINS` | servidores de desarrollo locales | Orígenes CORS. Nunca `*` en modo interno |
+| `VITE_AUTENIA_INTERNAL_MODE` | `true` | Equivalente en la build del dashboard. Debe coincidir con el backend |
 
 ### Límites
 
@@ -115,6 +177,14 @@ desde el navegador. Nunca impresas en logs.**
 | `AUTENIA_MAX_DURATION_S` | `55` | Máximo interno |
 | `AUTENIA_TZ` | `Europe/Madrid` | No programar sin horarios confirmados |
 
+### Ciclo diario (fase 6)
+
+| Variable | Por defecto | Notas |
+|---|---|---|
+| `AUTENIA_SCHEDULER_ENABLED` | `false` | Interruptor de parada. Actívalo solo con el ciclo manual ya probado |
+| `AUTENIA_PUBLISH_TIME` | sin definir | Hora local del disparo diario. Sin ella no se programa nada |
+| `AUTENIA_AUTO_APPROVE_AFTER` | `0` | Aprobaciones seguidas sin cambios antes de publicar sin botón. `0` = siempre humano |
+
 **Prohibido:** `BILLING_ENABLED`. Debe permanecer sin definir.
 
 ---
@@ -124,38 +194,50 @@ desde el navegador. Nunca impresas en logs.**
 Un **contenido** tiene N **versiones**. El estado vive en la versión; el contenido
 apunta a la versión vigente.
 
+**La revisión ocurre sobre el guion, antes de renderizar** (decidido por el
+usuario el 2026-07-29). Un tema rechazado no cuesta nada, y las correcciones
+llegan como texto editable en vez de como quejas sobre un vídeo ya hecho.
+Aprobar es aprobar las palabras: renderizar y publicar van solos después.
+
 ```
                   ┌──────────────┐
                   │  candidato   │  idea puntuada, sin gasto
                   └──────┬───────┘
-                         │ supera umbrales del preflight
+                         │ supera el umbral editorial
                   ┌──────▼───────┐
-                  │   guion      │  texto + fuentes, sin gasto de vídeo
+                  │   guion      │  texto + fuentes, sin gasto
                   └──────┬───────┘
-                         │ preflight OK (duración, derechos, coste)
+                         │ preflight OK (duración, afirmaciones, coste)
                   ┌──────▼───────┐
-          ┌───────│ renderizando │  ÚNICO estado que gasta
-          │       └──────┬───────┘
-          │ error        │ render OK
-    ┌─────▼─────┐ ┌──────▼───────┐
-    │  fallido  │ │ en_revision  │──────┐ enviado a Telegram
-    └───────────┘ └──────┬───────┘      │
-                         │ Aprobar      │ Pedir cambios / Regenerar
+                  │ en_revision  │──────┐ guion enviado a Telegram
+                  └──────┬───────┘      │
+                         │ Aprobar      │ Pedir cambios (texto del usuario)
                   ┌──────▼───────┐      │
                   │  aprobado    │      └──> nueva versión en `guion`
                   └──────┬───────┘           (la anterior queda `descartado`)
-                         │ publicar (si dry_run=false)
+                         │
                   ┌──────▼───────┐
-                  │  publicado   │  terminal, inmutable
-                  └──────────────┘
+          ┌───────│ renderizando │  ÚNICO estado que gasta
+          │       └──────┬───────┘
+          │ error        │ render OK y publicar (si dry_run=false)
+    ┌─────▼─────┐ ┌──────▼───────┐
+    │  fallido  │ │  publicado   │  terminal
+    └───────────┘ └──────────────┘
 
     Rechazar desde en_revision ──> `descartado` (terminal)
 ```
 
+**El vídeo se publica sin que nadie lo haya visto.** Es una decisión consciente
+del usuario: aprueba el guion y el resto va solo. Si algún día quiere una
+ventana de veto sobre el vídeo terminado, se añade como paso opcional; no la
+introduzcas por tu cuenta.
+
 ### Reglas
 
-- **Inmutabilidad tras aprobación.** Una versión en `aprobado` o `publicado` no
-  admite mutación. Todo cambio crea versión nueva.
+- **Inmutabilidad del guion tras aprobación.** Desde `aprobado` en adelante las
+  palabras no cambian; toda reescritura crea versión nueva que vuelve a
+  revisión. El render sí adjunta su salida a la versión aprobada: registrar el
+  vídeo producido no es modificar lo aprobado.
 - **`renderizando` es el único estado que gasta.** Comprueba límites de coste al
   entrar, nunca después.
 - **Una versión activa por contenido.** Rechaza entrar en `renderizando` si otra
@@ -164,6 +246,12 @@ apunta a la versión vigente.
 - **Regenerar preserva lo reutilizable.** Guion, voz, imágenes y segmentos no
   afectados por el feedback se heredan por hash.
 - **Transiciones ilegales lanzan error**, no se ignoran en silencio.
+- **La autoaprobación no salta estados.** Con `AUTENIA_AUTO_APPROVE_AFTER > 0` y la
+  racha cumplida, la versión sigue pasando por `en_revision` y por la ventana de
+  veto; solo el origen de la transición a `aprobado` cambia (temporizador en vez de
+  callback). Regístralo como aprobación automática, nunca como humana. Los frenos
+  duros —exclusiones del brief §6, límites de coste, derechos de uso— se evalúan
+  igual y siguen pudiendo mandar la versión a `descartado`.
 
 ### Concurrencia
 

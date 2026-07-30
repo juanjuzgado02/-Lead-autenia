@@ -117,7 +117,8 @@ Ordenados por encaje con el posicionamiento:
 - **Datos de clientes.** Ningún nombre, logo, captura, cifra ni caso identificable
   sin autorización escrita. Ante la duda, anonimiza o no lo uses.
 - Titulares o vídeos de terceros copiados como sustituto de pieza propia. Parafrasea,
-  atribuye y usa material ajeno solo si el derecho de uso lo permite.
+  y usa material propio. Un dato afirmado lleva su fuente, que solo se ve en
+  Telegram: es contra las cifras inventadas, no contra un abogado.
 - Jerga técnica sin traducir a consecuencia de negocio.
 - Contenido que solo entiende otro ingeniero de IA. El público es la pyme.
 

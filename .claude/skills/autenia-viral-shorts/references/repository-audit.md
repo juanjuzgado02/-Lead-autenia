@@ -73,9 +73,6 @@ Todo esto está en el historial de git a partir del commit de recorte:
 | `alembic/` | Migraciones de la base Postgres de `cloud/` |
 | 18 archivos de `tests/` | Cubrían lo anterior |
 
-**Se conservó `LICENSE`** (MIT de OpenShorts): es obligación de la licencia, no
-un descuido.
-
 Dos módulos sobrevivieron por mérito propio y se movieron dentro del paquete:
 
 - `ffmpeg_utils.py` → `autenia/ffmpeg.py`. Su `audio_encode_args()` normaliza a

@@ -70,13 +70,43 @@ ATTACKS = (
 #: Terms that show a candidate actually touches what Autenia sells. A piece with
 #: none of these has no demonstrable relation to the business and is dropped —
 #: that is the filter that stops the feed becoming generic AI news.
+#: How far back a story can be and still count as "today's news".
+#:
+#: Lives here, next to the freshness curve that has to agree with it, and is
+#: imported by the collector. Raised from 14 on 2026-07-30: Spanish SME
+#: reporting is not a daily firehose — the usable pieces are studies and
+#: official statistics that land a few times a month — and a fortnight's window
+#: kept returning nothing at all.
+MAX_AGE_DAYS = 30
+
+#: A candidate must touch at least one of these to count as Autenia's business.
+#:
+#: The first block is technology-shaped and was the whole list until
+#: 2026-07-30, when it rejected "El 76% de las empresas reconoce que la carga
+#: administrativa les resta tiempo para crecer" — a real outlet, a real figure,
+#: and a textbook description of what Autenia sells against — while letting two
+#: vendors' e-invoicing guides through on the word "facturación".
+#:
+#: The lesson is the same one the search angles learned: **name the problem, not
+#: the product.** A manager suffers paperwork and repeated typing; they do not
+#: suffer an absent CRM. The second block is that vocabulary.
 RELEVANCE = (
+    # What Autenia builds
     "automatizacion", "automatizar", "agente", "agentes", "chatbot",
     "inteligencia artificial", "ia", "whatsapp business", "crm", "erp",
     "cuadro de mando", "dashboard", "business intelligence", "bi",
     "pipeline de datos", "integracion", "api", "flujo de trabajo", "workflow",
     "atencion al cliente", "captacion de leads", "facturacion", "inventario",
     "informes", "reporting", "productividad", "pyme", "pymes", "autonomo",
+    # What the viewer actually suffers
+    "carga administrativa", "tarea administrativa", "tareas administrativas",
+    "trabajo administrativo", "gestion administrativa", "burocracia",
+    "burocratico", "papeleo", "tramite", "tramites", "gestion documental",
+    "documentacion", "tareas repetitivas", "trabajo repetitivo",
+    "horas perdidas", "tiempo perdido", "introducir datos", "hoja de calculo",
+    "excel", "errores manuales", "cobros", "morosidad", "plazos de pago",
+    "presupuestos", "albaranes", "nominas", "obligaciones fiscales",
+    "cumplimiento normativo", "digitalizacion", "absentismo",
 )
 
 
@@ -203,12 +233,19 @@ class Score:
 
 
 def _freshness(age_days: float) -> float:
-    """Full marks for today, fading to nothing over a fortnight."""
+    """Full marks for today, fading to nothing at the edge of the window.
+
+    Tied to :data:`MAX_AGE_DAYS` rather than to its own number. They were two
+    separate constants until 2026-07-30, when the window widened to 30 days and
+    this kept fading to zero at 14: everything from the older fortnight was
+    admitted by the collector and then scored as though it were worthless,
+    which is the worst of both rules.
+    """
     if age_days <= 1:
         return 1.0
-    if age_days >= 14:
+    if age_days >= MAX_AGE_DAYS:
         return 0.0
-    return max(0.0, 1.0 - (age_days - 1) / 13)
+    return max(0.0, 1.0 - (age_days - 1) / (MAX_AGE_DAYS - 1))
 
 
 def score(candidate: Candidate, *, judgments: dict[str, float] | None = None,

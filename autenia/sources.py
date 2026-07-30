@@ -19,11 +19,13 @@ from urllib.parse import urlparse
 import httpx
 
 from . import urls
+from .editorial import MAX_AGE_DAYS as editorial_window
 from .editorial import Candidate
 from .gemini import TEXT_MODEL, GeminiError, Usage, json_call, request, usage_of
 
-#: How far back a story can be and still count as "today's news".
-MAX_AGE_DAYS = 14
+#: How far back a story can be and still count as "today's news". Defined in
+#: :mod:`editorial`, because the freshness curve there has to agree with it.
+MAX_AGE_DAYS = editorial_window
 
 #: Searches aim at the viewer's problem, not at the technology.
 #:
@@ -32,34 +34,59 @@ MAX_AGE_DAYS = 14
 #: and an Oracle launch — all correctly scored near zero, because none of them
 #: describes something a manager suffers on a Monday. Ask about the pain and
 #: the evidence instead, and the results are usable.
+#:
+#: Measured 2026-07-30: five near-identical phrasings of ONE angle ("estudio con
+#: cifras sobre tiempo perdido en tareas administrativas"), all demanded at once
+#: in a single query, returned zero results — the model reported that nothing
+#: satisfied every condition simultaneously. Variety across genuinely different
+#: pains matters more than precision within one of them.
 SEARCH_ANGLES = (
-    "estudio horas que pierden las empresas en tareas administrativas repetitivas",
-    "informe productividad pymes españolas cifras tiempo perdido",
-    "datos sobre errores al introducir información manualmente entre sistemas",
-    "estudio consultas repetidas atención al cliente porcentaje empresas",
-    "informe digitalización pyme española datos y porcentajes",
+    "horas que pierden las empresas españolas en tareas administrativas",
+    "carga burocrática y administrativa que soportan las pymes en España",
+    "facturación electrónica obligatoria pymes España plazos y coste de adaptación",
+    "morosidad y plazos de pago entre empresas en España",
+    "absentismo y bajas laborales coste para las empresas españolas",
+    "escasez de personal cualificado y tiempo de contratación en pymes",
+    "errores administrativos y su coste en las empresas",
+    "tiempo de respuesta a clientes y consultas repetidas en atención al cliente",
+    "productividad de la pyme española comparada con Europa",
+    "digitalización de la pyme española datos y porcentajes",
+    "ciberseguridad en pymes españolas incidentes y coste",
 )
 
-_SEARCH_PROMPT = """\
-Busca estudios, informes y artículos recientes en español (últimos {days} días)
-sobre:
-{angles}
+#: How many angles one run searches. Each is a separate grounded call, because
+#: asking for all of them at once makes the model look for their intersection —
+#: which is empty — instead of their union.
+ANGLES_PER_RUN = 3
 
-Buscas EVIDENCIA sobre un problema que una pyme ya sufre —horas perdidas,
-errores, trabajo repetitivo, tiempo de respuesta— no novedades tecnológicas.
+_SEARCH_PROMPT = """\
+Busca en español artículos, estudios, informes y estadísticas oficiales sobre:
+
+{angle}
+
+Prioriza lo publicado desde {since}. Si algo es más antiguo pero sigue siendo el
+dato de referencia, inclúyelo indicando su fecha real.
+
+Buscas EVIDENCIA sobre un problema que una empresa española ya sufre —horas
+perdidas, coste, errores, trabajo repetitivo, plazos, obligaciones que consumen
+tiempo— no novedades tecnológicas.
 
 Para cada resultado indica: titular exacto, medio, fecha de publicación y dos o
 tres datos concretos y verificables que aparezcan en el texto (cifras,
 porcentajes, plazos).
 
-DESCARTA sin excepción:
+DESCARTA:
 - Lanzamientos y anuncios de producto de cualquier fabricante.
 - Notas de prensa de financiación o de resultados de empresa.
 - Páginas comerciales de consultoras y agencias que se promocionan.
-- Regulación, normativa y estándares.
-- Artículos sin ninguna cifra.
+- Artículos de opinión sin ningún dato.
 
-Si algo no describe un problema medible que sufra una empresa, no lo incluyas.\
+Una obligación legal o normativa SÍ vale cuando el artículo describe el trabajo
+o el coste que impone a las empresas: eso es un problema que sufren, no un
+anuncio de producto.
+
+Devuelve lo que encuentres aunque sea poco. No hace falta que un resultado
+cumpla todas las condiciones a la vez.\
 """
 
 _EXTRACT_SYSTEM = """\
@@ -97,12 +124,24 @@ _EXTRACT_SCHEMA = {
 }
 
 
-async def _search(days: int) -> tuple[str, list[dict], Usage]:
-    """Grounded search. Returns the prose, the grounding chunks and usage."""
-    prompt = _SEARCH_PROMPT.format(
-        days=days,
-        angles="\n".join(f"- {angle}" for angle in SEARCH_ANGLES),
-    )
+def angles_for(when: datetime | None = None,
+               *, count: int = ANGLES_PER_RUN) -> tuple[str, ...]:
+    """The angles this run searches, rotating by the day.
+
+    Rotation is the point. Asking the same three questions every morning means a
+    blank Tuesday is followed by an identical blank Wednesday; walking the list
+    means a quiet week still covers every pain Autenia can speak to.
+    """
+    day = (when or datetime.now(timezone.utc)).date().toordinal()
+    total = len(SEARCH_ANGLES)
+    start = (day * count) % total
+    return tuple(SEARCH_ANGLES[(start + i) % total] for i in range(min(count, total)))
+
+
+async def _search_one(angle: str, days: int) -> tuple[str, list[dict], Usage]:
+    """One grounded search for one angle."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%d/%m/%Y")
+    prompt = _SEARCH_PROMPT.format(angle=angle, since=since)
     payload = await request(
         f"models/{TEXT_MODEL}:generateContent",
         {
@@ -124,6 +163,43 @@ async def _search(days: int) -> tuple[str, list[dict], Usage]:
     text = "".join(part.get("text", "") for part in parts)
     chunks = candidate.get("groundingMetadata", {}).get("groundingChunks", [])
     return text, chunks, usage_of(payload)
+
+
+async def _search(days: int,
+                  angles: tuple[str, ...] | None = None
+                  ) -> tuple[str, list[dict], Usage]:
+    """Search several angles at once and pool what they find.
+
+    One call per angle, concurrently. A single call listing every angle asks the
+    model for their intersection — measured empty on 2026-07-30 — where what is
+    wanted is their union. An angle that fails does not sink the others: a dead
+    search is a quiet day for that question, not an error for the run.
+    """
+    chosen = angles if angles is not None else angles_for()
+    results = await asyncio.gather(
+        *(_search_one(angle, days) for angle in chosen),
+        return_exceptions=True,
+    )
+
+    texts: list[str] = []
+    chunks: list[dict] = []
+    prompt_tokens = output_tokens = 0
+    failures = 0
+    for angle, result in zip(chosen, results):
+        if isinstance(result, BaseException):
+            failures += 1
+            continue
+        text, found, usage = result
+        texts.append(f"### {angle}\n{text}")
+        chunks.extend(found)
+        prompt_tokens += usage.prompt_tokens
+        output_tokens += usage.output_tokens
+
+    if failures == len(chosen) and chosen:
+        raise GeminiError(f"las {failures} búsquedas fallaron")
+
+    return ("\n\n".join(texts), chunks,
+            Usage(prompt_tokens=prompt_tokens, output_tokens=output_tokens))
 
 
 async def _resolve(client: httpx.AsyncClient, uri: str) -> str | None:
@@ -198,14 +274,16 @@ def _parse_date(raw: str | None) -> datetime:
 
 
 async def collect(*, days: int = MAX_AGE_DAYS,
-                  exclude_hashes: set[str] | None = None) -> tuple[list[Candidate], Usage]:
+                  exclude_hashes: set[str] | None = None,
+                  angles: tuple[str, ...] | None = None
+                  ) -> tuple[list[Candidate], Usage]:
     """Today's candidates, deduplicated and with canonical sources.
 
     Returns an empty list rather than inventing filler when the search finds
     nothing usable — a blank day is a valid outcome and the caller is expected
     to report the skip.
     """
-    text, chunks, search_usage = await _search(days)
+    text, chunks, search_usage = await _search(days, angles)
     sources = await resolve_sources(chunks)
     if not sources:
         return [], search_usage
@@ -267,3 +345,34 @@ async def collect(*, days: int = MAX_AGE_DAYS,
         candidates.append(candidate)
 
     return candidates, usage
+
+
+async def collect_with_fallback(
+        *, days: int = MAX_AGE_DAYS,
+        exclude_hashes: set[str] | None = None) -> tuple[list[Candidate], Usage]:
+    """Today's angles first; the rest of them if today's found nothing.
+
+    A blank day should be a verdict about the news, not about the three
+    questions the rotation happened to pick. When the first pass comes back
+    empty this asks everything else Autenia can speak to before giving up — and
+    only then is "no hay nada" a statement worth sending to the operator.
+
+    The second pass costs one grounded call per remaining angle, and only runs
+    on a day that would otherwise produce nothing at all.
+    """
+    first = angles_for()
+    candidates, usage = await collect(
+        days=days, exclude_hashes=exclude_hashes, angles=first)
+    if candidates:
+        return candidates, usage
+
+    rest = tuple(a for a in SEARCH_ANGLES if a not in first)
+    if not rest:
+        return candidates, usage
+
+    more, extra = await collect(
+        days=days, exclude_hashes=exclude_hashes, angles=rest)
+    return more, Usage(
+        prompt_tokens=usage.prompt_tokens + extra.prompt_tokens,
+        output_tokens=usage.output_tokens + extra.output_tokens,
+    )

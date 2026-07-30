@@ -47,7 +47,7 @@ comprueba **al entrar** en `renderizando`.
 | Filtros duros | Descarta duplicados, política/polémica y piezas sin relación demostrable con Autenia. Test por cada exclusión del brief §6 | ✅ `autenia/editorial.py`, una prueba por exclusión |
 | Puntuación barata | Actualidad, dolor, encaje, hook, evidencia, potencial visual, conversión, coste. Sin llamadas caras | ✅ Señales deterministas gratis; las de juicio, en **una sola** llamada para todo el lote |
 | Guion fundamentado | Separa hecho de opinión y conserva fuentes | ✅ `autenia/gemini.py` con esquema JSON forzado por la API |
-| Preflight | Verifica duración, afirmaciones, derechos de uso, coste estimado y caché **antes** de renderizar | ✅ `autenia/preflight.py`; devuelve todos los problemas juntos, no el primero |
+| Preflight | Verifica duración, afirmaciones, coste estimado y caché **antes** de renderizar | ✅ `autenia/preflight.py`; devuelve todos los problemas juntos, no el primero |
 
 Sobre la recolección, medido el 2026-07-29:
 
@@ -250,7 +250,7 @@ introduzcas por tu cuenta.
   racha cumplida, la versión sigue pasando por `en_revision` y por la ventana de
   veto; solo el origen de la transición a `aprobado` cambia (temporizador en vez de
   callback). Regístralo como aprobación automática, nunca como humana. Los frenos
-  duros —exclusiones del brief §6, límites de coste, derechos de uso— se evalúan
+  duros —exclusiones del brief §6, límites de coste— se evalúan
   igual y siguen pudiendo mandar la versión a `descartado`.
 
 ### Concurrencia

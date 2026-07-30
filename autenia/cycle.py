@@ -55,7 +55,7 @@ async def run_cycle(*, force: bool = False) -> CycleResult:
                                "ya hay un guion en revisión o un vídeo en curso")
         known = await _known_topics(sess)
 
-    candidates, _usage = await sources.collect(exclude_hashes=known)
+    candidates, _usage = await sources.collect_with_fallback(exclude_hashes=known)
     if not candidates:
         return CycleResult("sin_candidatos", "la búsqueda no encontró nada usable")
 

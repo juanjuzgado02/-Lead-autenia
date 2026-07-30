@@ -92,8 +92,8 @@ a partir de memoria** ni generes un sustituto aproximado.
    cambiado, reaudita únicamente los flujos afectados y actualiza las conclusiones.
 4. Comprueba herramientas disponibles, variables ya definidas, Docker, FFmpeg, Node
    y Python. Nunca imprimas valores secretos.
-5. Revisa la licencia raíz (MIT, heredada de OpenShorts). El paquete `cloud/`, que
-   tenía licencia comercial aparte, ya no está en el repositorio: no lo restaures.
+5. El paquete `cloud/` (facturación multiempresa) ya no está en el repositorio.
+   No lo restaures.
 6. Presenta un plan por fases y empieza por el corte vertical mínimo. No conviertas
    toda la aplicación en una sola intervención.
 
@@ -195,13 +195,14 @@ El flujo que implementan, para referencia:
    servicios, fuerza del hook, evidencia, potencial visual, conversión y coste.
 5. Selecciona una idea y crea un guion fundamentado. Diferencia hechos de opinión y
    conserva las fuentes.
-6. Ejecuta un preflight de duración, afirmaciones, derechos de uso, coste estimado
-   y recursos en caché.
+6. Ejecuta un preflight de duración, afirmaciones, coste estimado y recursos en
+   caché.
 7. Renderiza solo cuando el candidato supere los umbrales.
 
-No copies titulares o vídeos de terceros como sustituto de una pieza propia.
-Parafrasea, atribuye y usa capturas o clips únicamente cuando el derecho de uso lo
-permita.
+No copies titulares ni vídeos ajenos como sustituto de una pieza propia:
+parafrasea. Un dato afirmado lleva su fuente, y esa fuente solo la ves tú en
+Telegram — nunca sale en el vídeo. Está para que el generador no invente cifras
+que Autenia publicaría con su marca, no por cautela legal.
 
 ### 3. Renderizar el formato correcto — 🚧 en curso (2026-07-30)
 
@@ -363,6 +364,5 @@ Resume al final:
 Si el usuario pide que clientes entren con sus cuentas, detén la ampliación. Propón
 una base separada con autenticación, organizaciones, aislamiento por tenant,
 OAuth/perfiles sociales por cliente, roles, cuotas, facturación y auditoría. Este
-repositorio ya no contiene nada de eso: el paquete `cloud/` que lo traía —bajo
-licencia comercial distinta de la MIT raíz— se eliminó el 2026-07-30. Rescatarlo
-del historial de git para un producto de pago exige revisar antes esa licencia.
+repositorio ya no contiene nada de eso: el paquete `cloud/` que lo traía se
+eliminó el 2026-07-30.

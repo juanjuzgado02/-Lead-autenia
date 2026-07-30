@@ -187,3 +187,103 @@ async def test_the_publisher_falls_back_to_the_domain():
         resolved = await sources.resolve_sources([chunk("https://redirect/1", "")])
 
     assert resolved == [{"url": "https://www.medio.es/articulo", "publisher": "medio.es"}]
+
+
+# -- angle rotation and the second pass (2026-07-30) ----------------------
+
+def test_the_angles_rotate_from_one_day_to_the_next():
+    """A blank Tuesday must not be followed by an identical blank Wednesday.
+
+    Measured 2026-07-30: one query demanding every angle at once returned zero
+    results — the model looked for their intersection. Rotation walks the list
+    instead, so a quiet week still covers every pain Autenia can speak to.
+    """
+    monday = datetime(2026, 7, 27, tzinfo=timezone.utc)
+    tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    assert sources.angles_for(monday) != sources.angles_for(tuesday)
+
+
+def test_rotation_is_stable_within_a_day():
+    """Two runs on the same day ask the same thing, so a retry is a retry."""
+    when = datetime(2026, 7, 30, 6, 0, tzinfo=timezone.utc)
+    later = datetime(2026, 7, 30, 23, 0, tzinfo=timezone.utc)
+    assert sources.angles_for(when) == sources.angles_for(later)
+
+
+def test_rotation_covers_every_angle_eventually():
+    seen = set()
+    for offset in range(len(sources.SEARCH_ANGLES) * 2):
+        day = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(days=offset)
+        seen.update(sources.angles_for(day))
+    assert seen == set(sources.SEARCH_ANGLES)
+
+
+def test_every_angle_asks_about_a_problem_not_a_product():
+    """The 2026-07-29 finding, kept as a rule.
+
+    Technology-shaped angles returned a consultancy's promo, a regulator's
+    notice and a product launch — all scored near zero, because none describes
+    something a manager suffers on a Monday.
+    """
+    banned = ("software", "herramienta", "plataforma", "solución", "mejores",
+              "comparativa", "precio")
+    for angle in sources.SEARCH_ANGLES:
+        assert not any(word in angle.lower() for word in banned), angle
+
+
+@pytest.mark.asyncio
+async def test_a_dead_angle_does_not_sink_the_others():
+    """One failed search is a quiet question, not a failed run."""
+    async def flaky(angle, days):
+        if "burocr" in angle:
+            raise RuntimeError("la búsqueda falló")
+        return (f"texto de {angle}", [chunk("https://x.example/1", "Medio")], Usage())
+
+    with patch.object(sources, "_search_one", AsyncMock(side_effect=flaky)):
+        text, chunks_found, _ = await sources._search(
+            30, ("carga burocrática y administrativa", "morosidad y plazos de pago"))
+
+    assert "morosidad" in text
+    assert len(chunks_found) == 1
+
+
+@pytest.mark.asyncio
+async def test_every_angle_failing_is_an_error_not_a_blank_day():
+    """Silence from the network must never be reported as silence in the news."""
+    with patch.object(sources, "_search_one",
+                      AsyncMock(side_effect=RuntimeError("sin red"))):
+        with pytest.raises(Exception):
+            await sources._search(30, ("uno", "dos"))
+
+
+@pytest.mark.asyncio
+async def test_the_second_pass_only_runs_when_the_first_found_nothing():
+    calls = []
+
+    async def fake_collect(*, days, exclude_hashes, angles):
+        calls.append(angles)
+        return ([object()] if len(calls) == 1 else []), Usage()
+
+    with patch.object(sources, "collect", AsyncMock(side_effect=fake_collect)):
+        found, _ = await sources.collect_with_fallback()
+
+    assert len(calls) == 1, "a productive first pass must not pay for a second"
+    assert found
+
+
+@pytest.mark.asyncio
+async def test_a_blank_first_pass_asks_the_remaining_angles():
+    """A blank day should be a verdict on the news, not on three questions."""
+    calls = []
+
+    async def fake_collect(*, days, exclude_hashes, angles):
+        calls.append(angles)
+        return [], Usage()
+
+    with patch.object(sources, "collect", AsyncMock(side_effect=fake_collect)):
+        await sources.collect_with_fallback()
+
+    assert len(calls) == 2
+    first, rest = calls
+    assert not set(first) & set(rest), "the second pass must not repeat the first"
+    assert set(first) | set(rest) == set(sources.SEARCH_ANGLES)

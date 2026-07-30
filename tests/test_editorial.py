@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from autenia.editorial import (
-    MIN_SCORE, Candidate, hard_rejections, pick, rank, score, survives,
+    MAX_AGE_DAYS, MIN_SCORE, Candidate, _freshness, hard_rejections, pick,
+    rank, score, survives,
 )
 
 NOW = datetime(2026, 7, 29, 10, 0, tzinfo=timezone.utc)
@@ -181,3 +182,52 @@ def test_different_stories_hash_differently():
     a = make("Agentes de IA para pymes")
     b = make("Cuadros de mando en tiempo real para pymes")
     assert a.topic_hash != b.topic_hash
+
+
+# -- relevance vocabulary (2026-07-30) ------------------------------------
+
+@pytest.mark.parametrize("headline", [
+    "El 76% de las empresas reconoce que la carga administrativa les resta tiempo",
+    "Las pymes españolas dedican 12 horas semanales al papeleo",
+    "La burocracia se come el 4% de la facturación de los autónomos",
+    "Un estudio cifra en 8.000 millones el coste de los trámites para las empresas",
+    "El absentismo laboral cierra el año en máximos históricos",
+    "La morosidad alarga los plazos de pago a 82 días de media",
+])
+def test_a_problem_shaped_headline_is_relevant(headline):
+    """The filter must recognise the pain, not only the product.
+
+    Until 2026-07-30 RELEVANCE listed only technology (crm, erp, api, chatbot),
+    so a real outlet reporting a real figure about administrative burden was
+    rejected as "no toca ningún servicio de Autenia" while two vendors'
+    e-invoicing guides passed on the word "facturación". A manager suffers
+    paperwork; nobody suffers an absent CRM.
+    """
+    assert "sin_relacion" not in rules(make(headline, facts=["76% de las empresas"]))
+
+
+def test_something_unrelated_is_still_rejected():
+    """Widening the vocabulary must not turn the filter off."""
+    assert "sin_relacion" in rules(
+        make("El Barcelona ficha a un delantero por 40 millones",
+             facts=["40 millones de euros"]))
+
+
+# -- freshness follows the window (2026-07-30) ----------------------------
+
+def test_freshness_reaches_zero_only_at_the_edge_of_the_window():
+    """The curve and the collector's window must be the same number.
+
+    They were two constants; widening the window to 30 days left this fading to
+    zero at 14, so everything from the older fortnight was admitted and then
+    scored as worthless — the worst of both rules.
+    """
+    assert _freshness(0) == 1.0
+    assert _freshness(MAX_AGE_DAYS) == 0.0
+    midpoint = _freshness(MAX_AGE_DAYS / 2)
+    assert 0.3 < midpoint < 0.7, "a story from mid-window is neither fresh nor dead"
+
+
+def test_the_collector_and_the_score_share_one_window():
+    from autenia import sources
+    assert sources.MAX_AGE_DAYS == MAX_AGE_DAYS

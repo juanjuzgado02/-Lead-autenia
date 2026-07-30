@@ -36,8 +36,8 @@ Hace falta `ffmpeg` en el sistema si lo ejecutas fuera del contenedor
    con Autenia; puntúa actualidad, dolor del cliente, encaje, gancho, evidencia,
    potencial visual, conversión y coste.
 3. **Escribe** un guion que separa hechos de opinión y se queda con las fuentes.
-4. **Comprueba** duración, afirmaciones, derechos de uso y coste estimado antes
-   de gastar un céntimo.
+4. **Comprueba** duración, afirmaciones y coste estimado antes de gastar un
+   céntimo.
 5. **Te pregunta** por Telegram: guion, fuentes, coste y cuatro botones —
    `Aprobar`, `Pedir cambios`, `Rechazar`, `Regenerar`.
 6. **Renderiza** solo lo aprobado: narración por segmentos, material propio de
@@ -82,4 +82,3 @@ facturación, Whisper, YOLO, MediaPipe, yt-dlp, el renderizador de Remotion y el
 servidor FastAPI. Sigue en el historial de git por si alguna decisión hay que
 revisarla.
 
-Se conserva la licencia MIT del original en `LICENSE`.

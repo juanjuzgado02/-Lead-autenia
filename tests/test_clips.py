@@ -144,3 +144,66 @@ def test_only_new_footage_is_charged():
     before = {"/cache/a.mp4"}
     assert clips.new_cost_cents(["/cache/a.mp4", "/cache/b.mp4", None],
                                 before) == clips.CLIP_COST_CENTS
+
+
+# -- using the whole clip (2026-07-30) ------------------------------------
+
+def test_a_clip_keeps_running_into_the_next_scene():
+    """Footage is billed by the second, so paying for eight and showing three
+    is the single most expensive habit this renderer could have.
+
+    Measured on a real 22-second short: one clip per scene meant 40 seconds
+    paid for 22 seconds shown — 44% thrown away.
+    """
+    from autenia.render import Segment, _stretch_clips
+
+    segments = [
+        Segment(kind="hook", text="a " * 8, visual_request="v",
+                duration_s=3.2, clip_path="/cache/uno.mp4"),
+        Segment(kind="cta", text="b " * 6, visual_request="v", duration_s=2.7),
+    ]
+    _stretch_clips(segments)
+
+    assert segments[1].clip_path == "/cache/uno.mp4"
+    assert segments[1].clip_offset == pytest.approx(3.2)
+
+
+def test_a_clip_is_never_stretched_past_its_own_length():
+    """Overrunning loops the clip, which is the artefact eight seconds exists
+    to avoid."""
+    from autenia.render import Segment, _stretch_clips
+
+    segments = [
+        Segment(kind="hook", text="a", visual_request="v",
+                duration_s=7.0, clip_path="/cache/uno.mp4"),
+        Segment(kind="escena", text="b", visual_request="v", duration_s=5.0),
+    ]
+    _stretch_clips(segments)
+    assert segments[1].clip_path is None, "no cabe: debe caer a foto"
+
+
+def test_a_scene_with_its_own_clip_starts_it_from_the_top():
+    from autenia.render import Segment, _stretch_clips
+
+    segments = [
+        Segment(kind="hook", text="a", visual_request="v",
+                duration_s=3.0, clip_path="/cache/uno.mp4"),
+        Segment(kind="escena", text="b", visual_request="v",
+                duration_s=3.0, clip_path="/cache/dos.mp4"),
+    ]
+    _stretch_clips(segments)
+    assert segments[1].clip_offset == 0.0
+
+
+def test_autenias_own_material_is_never_stretched_over():
+    """Real footage belongs to its scene; borrowing it elsewhere misrepresents
+    what the narration is claiming."""
+    from autenia.render import Segment, _stretch_clips
+
+    segments = [
+        Segment(kind="hook", text="a", visual_request="v", duration_s=2.0,
+                asset_path="/lib/propio.mp4"),
+        Segment(kind="escena", text="b", visual_request="v", duration_s=2.0),
+    ]
+    _stretch_clips(segments)
+    assert segments[1].clip_path is None

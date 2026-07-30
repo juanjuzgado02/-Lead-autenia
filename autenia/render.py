@@ -63,6 +63,7 @@ class Segment:
     duration_s: float = 0.0
     asset_path: str | None = None    # Autenia's own footage, always preferred
     clip_path: str | None = None     # generated footage, reused across videos
+    clip_offset: float = 0.0         # where in that clip this scene starts
     image_paths: list[str] = field(default_factory=list)  # generated stand-ins
 
     @property
@@ -130,6 +131,49 @@ def segments_of(script: dict) -> list[Segment]:
     if cta:
         beats.append(Segment(kind="cta", text=cta, visual_request=cta))
     return beats
+
+
+def _stretch_clips(segments: list[Segment]) -> None:
+    """Let a clip keep running into the scenes that follow it.
+
+    Footage is billed by the second, and a scene lasting three seconds was
+    being given a whole eight-second clip: measured on a real 22-second short,
+    40 of the 44 paid-for seconds were shown and **44% was thrown away**.
+
+    So a clip now plays on past its own scene, at the right offset, until it
+    runs out. Same seconds bought, nearly twice as much video shown — and it
+    reads better too, because a continuous shot under two sentences looks like
+    an edit rather than a slideshow of stock.
+
+    Durations are not known until narration, so this runs on the estimate and
+    keeps a margin: overrunning the clip would loop it, which is the artefact
+    the eight-second length was chosen to avoid.
+    """
+    budget: dict[str, float] = {}
+    for segment in segments:
+        if segment.asset_path:
+            continue
+        if segment.clip_path:
+            # A scene with its own clip starts it from the top.
+            segment.clip_offset = 0.0
+            budget[segment.clip_path] = _estimated_seconds(segment)
+            continue
+
+        # No clip of its own: continue whichever one still has footage left.
+        for path, used in budget.items():
+            spare = clips.CLIP_SECONDS - used
+            if spare >= _estimated_seconds(segment) + 0.2:
+                segment.clip_path = path
+                segment.clip_offset = used
+                budget[path] = used + _estimated_seconds(segment)
+                break
+
+
+def _estimated_seconds(segment: Segment) -> float:
+    """Length from the word count, since the voice has not spoken yet."""
+    if segment.duration_s:
+        return segment.duration_s
+    return max(0.8, len(re.findall(r"\S+", segment.text)) / 2.6)
 
 
 def _shots_wanted(text: str) -> int:
@@ -334,8 +378,13 @@ def _segment_clip(segment: Segment, out_path: str, workdir: str, index: int,
             # vertical feed read as a reposted landscape video.
             motion = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
                       f"crop={WIDTH}:{HEIGHT}")
-            args = [ffmpeg, "-y", "-stream_loop", "-1", "-t", f"{duration:.3f}",
-                    "-i", background]
+            # -ss before -i so a scene continuing a clip picks up where the
+            # previous one left off instead of restarting it, which would read
+            # as a jump cut back to a shot the viewer just saw.
+            args = [ffmpeg, "-y", "-stream_loop", "-1"]
+            if segment.clip_offset > 0.01:
+                args += ["-ss", f"{segment.clip_offset:.3f}"]
+            args += ["-t", f"{duration:.3f}", "-i", background]
         else:
             motion = _ken_burns(duration, index)
             args = [ffmpeg, "-y", "-loop", "1", "-t", f"{duration:.3f}",
@@ -535,6 +584,7 @@ async def render(script: dict, *, out_path: str, workdir: str,
             [s.visual_request for s in uncovered], [s.text for s in uncovered])
         for segment, clip in zip(uncovered, footage):
             segment.clip_path = clip
+        _stretch_clips(segments)
 
     uncovered = [s for s in segments if not s.asset_path and not s.clip_path]
     if generate_images and uncovered:

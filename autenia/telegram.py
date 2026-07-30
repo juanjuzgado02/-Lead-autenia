@@ -186,6 +186,24 @@ async def send_video(path: str, caption: str = "") -> dict:
     return body["result"]
 
 
+async def send_audio(path: str, caption: str = "", title: str = "") -> dict:
+    """Send a sound file. Used to choose the brand's voice by listening."""
+    autenia.require("review")
+    with open(path, "rb") as handle:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                f"{_base()}/sendAudio",
+                data={"chat_id": autenia.telegram_chat_id,
+                      "caption": caption[:1024], "title": title[:64],
+                      "parse_mode": "HTML"},
+                files={"audio": (path.rsplit("/", 1)[-1], handle, "audio/mpeg")},
+            )
+    body = response.json()
+    if not body.get("ok"):
+        raise TelegramError(f"sendAudio failed: {body.get('description')}")
+    return body["result"]
+
+
 async def answer_callback(callback_id: str, text: str = "") -> None:
     """Clear the button's spinner. Telegram retries the update until we do."""
     try:

@@ -23,7 +23,26 @@ from . import gemini
 #: ElevenLabs' multilingual model handles Spanish; v2 is the stable one.
 ELEVENLABS_MODEL = "eleven_multilingual_v2"
 #: A neutral Spanish-capable default. Override with AUTENIA_VOICE_NAME.
+#:
+#: This is a fallback, not a choice: the voice is picked by listening, with
+#: ``python autenia_bot.py voces``, and the winner goes in AUTENIA_VOICE_NAME.
 ELEVENLABS_DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL"
+
+#: Gemini's male prebuilt voices, with the character each one advertises.
+#: Sampled 2026-07-30; Juan chose Iapetus.
+GEMINI_MALE_VOICES = (
+    ("Charon", "informativa"), ("Orus", "firme"), ("Iapetus", "clara"),
+    ("Achird", "cercana"), ("Alnilam", "rotunda"), ("Algenib", "grave"),
+    ("Rasalgethi", "didáctica"), ("Sadaltager", "experta"),
+)
+
+#: The line every candidate voice reads. Same words for all of them, or the
+#: comparison is between scripts rather than between voices.
+AUDITION_TEXT = (
+    "La factura electrónica obligatoria ya está aquí. No es solo un PDF: es un "
+    "formato estructurado que exige la ley. Si esto te suena, en la web hay un "
+    "cuestionario de un minuto."
+)
 
 #: Roughly what ElevenLabs charges per character on the entry plan, in cents.
 #: Used only to estimate before spending; the real figure settles afterwards.
@@ -57,16 +76,21 @@ def estimate_cents(text: str, provider: str | None = None) -> int:
 
 
 async def synthesize(text: str, *, out_path: str,
-                     provider: str | None = None) -> Spoken:
-    """Speak ``text`` into a mono WAV. Raises VoiceError on any failure."""
+                     provider: str | None = None,
+                     name: str | None = None) -> Spoken:
+    """Speak ``text`` into a mono WAV. Raises VoiceError on any failure.
+
+    ``name`` overrides the configured voice for one call. It exists so an
+    audition can read the same line in eight voices without eight restarts.
+    """
     if not text or not text.strip():
         raise VoiceError("nothing to speak: the narration is empty")
 
     chosen = provider or autenia.voice_provider
     if chosen == "gemini":
-        path = await _gemini(text, out_path)
+        path = await _gemini(text, out_path, name)
     elif chosen == "elevenlabs":
-        path = await _elevenlabs(text, out_path)
+        path = await _elevenlabs(text, out_path, name)
     else:  # pragma: no cover - core_config validates this
         raise VoiceError(f"unknown voice provider {chosen!r}")
 
@@ -78,10 +102,10 @@ async def synthesize(text: str, *, out_path: str,
     )
 
 
-async def _gemini(text: str, out_path: str) -> str:
+async def _gemini(text: str, out_path: str, name: str | None = None) -> str:
     try:
         path, _usage = await gemini.synthesize(
-            text, voice=autenia.voice_name or gemini.DEFAULT_VOICE,
+            text, voice=name or autenia.voice_name or gemini.DEFAULT_VOICE,
             out_path=out_path,
         )
     except gemini.GeminiError as exc:
@@ -89,9 +113,9 @@ async def _gemini(text: str, out_path: str) -> str:
     return path
 
 
-async def _elevenlabs(text: str, out_path: str) -> str:
+async def _elevenlabs(text: str, out_path: str, name: str | None = None) -> str:
     autenia.require("voice")
-    voice_id = autenia.voice_name or ELEVENLABS_DEFAULT_VOICE
+    voice_id = name or autenia.voice_name or ELEVENLABS_DEFAULT_VOICE
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
     async with httpx.AsyncClient(timeout=300.0) as client:
@@ -114,6 +138,41 @@ async def _elevenlabs(text: str, out_path: str) -> str:
         handle.setframerate(24000)
         handle.writeframes(response.content)
     return out_path
+
+
+async def catalogue(provider: str | None = None,
+                    *, male_only: bool = True) -> list[tuple[str, str]]:
+    """Voices worth auditioning, as ``(id, description)``.
+
+    Gemini's prebuilt list is fixed and known. ElevenLabs depends on the
+    account, so it is asked — a hardcoded voice id is a guess about somebody
+    else's library, and the whole point is that the choice is made by ear.
+    """
+    chosen = provider or autenia.voice_provider
+    if chosen == "gemini":
+        return [(name, f"{name} — {character}")
+                for name, character in GEMINI_MALE_VOICES]
+
+    autenia.require("voice")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers={"xi-api-key": autenia.elevenlabs_api_key})
+    if response.status_code != 200:
+        raise VoiceError(
+            f"ElevenLabs returned {response.status_code}: {response.text[:200]}")
+
+    found = []
+    for entry in response.json().get("voices", []):
+        labels = entry.get("labels") or {}
+        if male_only and labels.get("gender", "").lower() not in ("", "male"):
+            continue
+        detail = ", ".join(
+            str(labels[key]) for key in ("accent", "age", "description")
+            if labels.get(key))
+        name = entry.get("name", "sin nombre")
+        found.append((entry["voice_id"], f"{name} — {detail}" if detail else name))
+    return found
 
 
 def _duration_s(path: str) -> float:

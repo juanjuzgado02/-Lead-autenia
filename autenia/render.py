@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from . import assets as asset_lib
 from . import ffmpeg as ff
-from . import images, voice
+from . import clips, images, voice
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 
@@ -62,12 +62,19 @@ class Segment:
     audio_path: str = ""
     duration_s: float = 0.0
     asset_path: str | None = None    # Autenia's own footage, always preferred
+    clip_path: str | None = None     # generated footage, reused across videos
     image_paths: list[str] = field(default_factory=list)  # generated stand-ins
 
     @property
     def background(self) -> str | None:
-        """What this scene opens on. Own material wins over generated."""
-        return self.asset_path or (self.image_paths[0] if self.image_paths else None)
+        """What this scene opens on, best available first.
+
+        Own material, then generated footage, then a photograph. Real material
+        wins because it is the format's whole point; footage beats a still
+        because a still is what Juan kept calling "fotos pasándose".
+        """
+        return (self.asset_path or self.clip_path
+                or (self.image_paths[0] if self.image_paths else None))
 
     @property
     def image_path(self) -> str | None:
@@ -86,7 +93,7 @@ class Segment:
         into pieces of a fixed length would fight whatever it is showing.
         """
         duration = max(0.8, self.duration_s)
-        if self.asset_path or not self.image_paths:
+        if self.asset_path or self.clip_path or not self.image_paths:
             return [(self.background, duration)]
 
         wanted = min(len(self.image_paths),
@@ -519,7 +526,17 @@ async def render(script: dict, *, out_path: str, workdir: str,
     for segment, chosen in zip(segments, plan):
         segment.asset_path = chosen.path if chosen else None
 
+    # Generated footage, above photographs and below Autenia's own material.
+    # Cache hits are free, so a library that has seen this subject before costs
+    # nothing; only genuinely new shots are rationed.
     uncovered = [s for s in segments if not s.asset_path]
+    if generate_images and uncovered and clips.enabled():
+        footage = await clips.for_scenes(
+            [s.visual_request for s in uncovered], [s.text for s in uncovered])
+        for segment, clip in zip(uncovered, footage):
+            segment.clip_path = clip
+
+    uncovered = [s for s in segments if not s.asset_path and not s.clip_path]
     if generate_images and uncovered:
         # How many framings each scene needs is known only after narration,
         # which is when its real length is known — but generating images then

@@ -225,40 +225,64 @@ _SCRIPT_SYSTEM = """\
 Escribes guiones de vídeo vertical para Autenia, consultora española de IA y
 automatización para pymes. Posicionamiento: "experiencia real, no hype".
 
+QUÉ ESTÁS ESCRIBIENDO
+- Un short. Se ve en el móvil, muchas veces sin sonido, y compite contra el dedo
+  del espectador. Si la primera frase no le para, el resto del guion no existe.
+- La noticia es la MATERIA PRIMA, no el guion. No la resumas y no hagas de
+  locutor de informativos: cuenta qué le pasa a una pyme por culpa de lo que
+  dice esa noticia.
+
 FORMATO
-- Español de España. Tuteo.
+- Español de España. Tuteo. Le hablas a UNA persona, no a un auditorio.
 - Cuenta las palabras: el presupuesto que te den es un límite duro, no una
   sugerencia. Se lee a unas 2,6 palabras por segundo, así que pasarte de
   palabras es pasarte de segundos y el guion se descarta entero.
-- El hook va en el primer segundo. La idea central, en los tres primeros.
-- El hook se dice UNA vez. La primera escena continúa la frase del hook, no la
-  repite: si el hook ya está en la escena 1, el vídeo dice lo mismo dos veces.
-- Entre tres y cinco escenas. Más escenas en 30 segundos es un carrusel, no un
-  vídeo.
-- Sin intro corporativa. Prohibido "Hola, somos Autenia y hoy...". Abre con el
-  problema o con el resultado.
+- Entre tres y cinco escenas. Más escenas en 30 segundos es un carrusel.
+- **Frases de menos de catorce palabras. Una idea por frase.** Nada de
+  subordinadas encadenadas: si una frase necesita dos comas para respirar,
+  pártela en dos.
+- Sin intro corporativa. Prohibido "Hola, somos Autenia y hoy…", "en el mundo
+  actual", "cada vez más empresas", "en un entorno cada vez más digital".
+
+EL GANCHO
+- Va en el primer segundo y se dice UNA vez. La escena 1 continúa la frase, no
+  la repite.
+- Concreto: una consecuencia, una pérdida, un plazo, algo que ya está pasando.
+  Nombra la cosa, no la categoría: "las facturas en PDF", no "la digitalización".
+- Prohibido abrir con "Según", con una cifra suelta o con una pregunta retórica
+  vacía del tipo "¿Sabías que…?".
+- Bien: "Enviar facturas en PDF va a dejar de ser legal."
+- Mal: "Según Espacio Pymes, el 94% de las empresas todavía usa PDF."
+
+RITMO
+- La estructura que funciona: golpe → la prueba → qué significa para ti → qué
+  puedes hacer → CTA.
+- **Una cifra manda en el vídeo.** Dos compiten entre ellas y no se recuerda
+  ninguna; tres seguidas son un teletipo. Elige el dato que más duela y
+  construye alrededor; el resto sobra aunque te lo hayan dado.
+- Las escenas sin cifra son las que dan el ritmo: cortas, en segunda persona, y
+  hablan de lo que le pasa a él, no del sector.
+- Termina las frases en la palabra que importa. "Cuatro horas al mes" pega más
+  al final que en medio.
 
 VOZ
-- Frases cortas. Directo y concreto. Cero superlativos.
 - Sí: "Esto son cuatro horas al mes que no vuelves a tocar."
 - No: "Revoluciona tu negocio con el poder transformador de la IA."
 - El espectador está ocupado y es competente, pero no conoce esta tecnología.
-  Nunca condescendiente, nunca pomposo.
-- No expliques cómo funciona la tecnología. Muestra un trabajo manual que
+  Nunca condescendiente, nunca pomposo, cero jerga.
+- No expliques cómo funciona la tecnología. Enseña un trabajo manual que
   desaparece.
 
 ATRIBUCIÓN — OBLIGATORIA Y HABLADA
-- Toda escena marcada como "hecho" **dice su fuente en voz alta**, dentro de la
-  narración: "Según Europa Press…", "Un informe de la CEOE cifra…", "Los datos
-  del INE dicen que…".
+- La escena que da la cifra **dice de dónde sale, dentro de la narración y en la
+  misma frase**: "Según Espacio Pymes, el 94%…".
 - No basta con rellenar el campo "fuente": ese campo lo ve el revisor, no el
   espectador. Una cifra sin nombre detrás suena inventada, y es la diferencia
   entre un dato y una promesa de vendedor.
-- Dilo de forma natural y breve, al principio de la frase. No lo conviertas en
-  una nota al pie: "Según Europa Press, el absentismo cerró el año en el 7,7%."
-- Si dos escenas seguidas usan la misma fuente, en la segunda basta con "el
-  mismo informe" o "esos datos". Repetir el nombre tres veces suena a locución
-  de teletipo.
+- Dilo una vez y sigue. **No encadenes escenas atribuidas**: "los datos de ese
+  medio indican", "ese informe fija" suena a teletipo, que es exactamente lo que
+  hay que evitar. Si de verdad hacen falta dos datos, van juntos en la misma
+  escena y comparten la atribución.
 
 REGLAS DURAS
 - Cada afirmación factual sale de los hechos que te doy, y la marcas como
@@ -340,10 +364,44 @@ async def write_script(candidate, *, seconds: int = 30) -> tuple[dict, Usage]:
         f"Publicado: {candidate.published_at.date().isoformat()}\n"
         f"Resumen: {candidate.summary or '(sin resumen)'}\n\n"
         f"Hechos disponibles (son los ÚNICOS datos que puedes afirmar):\n{facts}\n\n"
+        f"Elige UNO de esos datos —el que más duela a quien lleva una pyme— y "
+        f"construye el vídeo alrededor de él. Los demás no hacen falta: están "
+        f"ahí para que escojas, no para que los cuentes todos.\n\n"
         f"No parafrasees el titular como si fuera tuyo: la pieza es propia, la "
         f"noticia solo es el punto de partida."
     )
     return await json_call(prompt, _SCRIPT_SCHEMA, system=_SCRIPT_SYSTEM)
+
+
+async def write_brief_script(brief: str, *, seconds: int = 30) -> tuple[dict, Usage]:
+    """Turn something the operator asked for into a script.
+
+    Same voice and same gate as a news script, one difference that matters:
+    there is no collected evidence behind it. So the rule is inverted — figures
+    are forbidden **unless the operator supplied one along with where it came
+    from**, in which case that scene is a fact and says so out loud. Without
+    that, everything is an opinion, which is exactly what preflight will let
+    through and what an honest video can claim.
+    """
+    budget = int(seconds * WORDS_PER_SECOND)
+    lower, upper = int(budget * 0.85), int(budget * 1.05)
+    return await json_call(
+        f"Escribe el guion de un vídeo de unos {seconds} segundos sobre esto, "
+        f"que te pide el operador de Autenia:\n\n{brief.strip()}\n\n"
+        f"PRESUPUESTO DE PALABRAS: entre {lower} y {upper} palabras contando "
+        f"hook, narración de todas las escenas y CTA juntos. Cuéntalas antes de "
+        f"responder. Pasarte descarta el guion.\n\n"
+        f"AQUÍ NO TIENES NOTICIA NI FUENTES. Por tanto:\n"
+        f"- Si el operador no te ha dado un dato CON su origen, el guion no "
+        f"lleva ni una cifra: ni porcentajes, ni horas, ni euros, ni plazos. "
+        f"Todas las escenas son 'opinion'. Una cifra sin fuente descarta el "
+        f"guion entero, y aquí no hay de dónde sacarla.\n"
+        f"- Si el operador sí te da un dato y de dónde sale, esa escena es "
+        f"'hecho', lleva ese origen en el campo 'fuente' y lo dice en voz alta "
+        f"dentro de la narración.\n\n"
+        f"Sin cifras el vídeo se sostiene igual: se sostiene sobre el trabajo "
+        f"concreto que desaparece, contado en segunda persona.",
+        _SCRIPT_SCHEMA, system=_SCRIPT_SYSTEM)
 
 
 def narration_text(script: dict) -> str:

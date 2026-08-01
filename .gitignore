@@ -53,3 +53,6 @@ GUIA-DEL-REPOSITORIO.docx
 
 # Imágenes generadas (caché). Se regeneran pagando.
 data/cache/
+
+# Ficheros de bloqueo de Word: aparecen al abrir la guía y no son nada.
+~$*

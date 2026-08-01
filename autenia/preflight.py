@@ -78,11 +78,20 @@ class Result:
 #: Ways a narration can name where a figure came from. The generic ones exist
 #: because a script that says "Según Europa Press" three times in a row reads
 #: like a teleprinter; the second mention is allowed to be "el mismo informe".
+#:
+#: The list has to cover every wording ``_SCRIPT_SYSTEM`` invites, or the prompt
+#: and the gate disagree and a script gets thrown away for obeying. That is what
+#: happened on 2026-08-01: the model wrote "el mismo análisis indica que…", which
+#: is precisely the repeat-attribution the prompt asks for, and preflight refused
+#: it because only "informe" and "estudio" were spelled out here.
 _ATTRIBUTION = re.compile(
-    r"\b(seg[uú]n|de acuerdo con|conforme a|un informe|el informe|"
-    r"ese informe|el mismo informe|un estudio|el estudio|ese estudio|"
-    r"los datos de|esos datos|estos datos|las cifras de|datos del|"
-    r"public[oó]|recoge|cifra en|estima)\b",
+    r"\b(seg[uú]n|de acuerdo con|conforme a|"
+    # A determiner is still required: the bare word "informe" in a sentence is
+    # not an attribution, "ese informe" is.
+    r"(un|una|el|la|ese|esa|este|esta)\s+(mism[oa]\s+)?"
+    r"(informe|estudio|an[aá]lisis|encuesta|bar[oó]metro|fuente)|"
+    r"los datos de|esos datos|estos datos|los mismos datos|las cifras de|"
+    r"datos del|public[oó]|recoge|cifra en|estima)\b",
     re.IGNORECASE)
 
 #: Words too common to prove a source was named. "Blog" or "España" appearing

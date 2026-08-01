@@ -197,6 +197,12 @@ def test_naming_the_outlet_in_the_line_is_enough():
     "El mismo informe cifra el coste en 8.000 millones.",
     "Esos datos apuntan a 12 horas semanales.",
     "Un estudio reciente lo sitúa en el 40%.",
+    # Escrita por el modelo el 1/08/2026 y rechazada: es exactamente la
+    # repetición que el prompt invita a usar, pero aquí solo estaban "informe"
+    # y "estudio", así que se descartó un guion por obedecer.
+    "El mismo análisis indica que casi el 80% lo desconoce.",
+    "La misma fuente cifra en 12 las horas perdidas.",
+    "Esa encuesta sitúa el dato en el 63%.",
 ])
 def test_a_second_mention_may_be_generic(linea):
     """Saying "Según Europa Press" three times running reads like a teleprinter."""

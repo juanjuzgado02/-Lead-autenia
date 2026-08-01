@@ -31,7 +31,9 @@ pip install -r requirements.txt   # small on purpose: httpx, sqlalchemy, Pillow
 python autenia_bot.py listen      # the review bot (long polling)
 python autenia_bot.py cycle       # run one daily cycle by hand
 python autenia_bot.py both        # one cycle, then keep listening
-pytest tests/ -q                  # the whole suite, ~3 seconds
+python autenia_bot.py voces       # read one line in every voice, to choose by ear
+python -m tools.muestras          # the same script cut five ways, plus a comparison reel
+pytest tests/ -q                  # the whole suite: 301 tests, ~3.5 seconds
 docker compose up --build         # the same bot, containerised
 ```
 
@@ -43,24 +45,33 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 
 ### The daily cycle
 
-1. **Collect** (`autenia/sources.py`) — Gemini with Google grounding, searching
-   problem-shaped angles rather than technology names. Redirects are resolved to
-   canonical URLs and checked against `autenia/urls.py` before being fetched.
+1. **Collect** (`autenia/sources.py`) — Gemini with Google grounding. Eighteen
+   angles in two families (what AI now does for a small company, what the viewer
+   already suffers); three are rotated in per run, one call each, and a day that
+   finds nothing asks the remaining fifteen before giving up. Redirects are
+   resolved to canonical URLs and checked against `autenia/urls.py` before being
+   fetched.
 2. **Filter and score** (`autenia/editorial.py`) — hard exclusions first, then a
-   cheap score: recency, customer pain, fit with Autenia's services, hook
-   strength, evidence, visual potential, conversion, cost.
+   cheap score over eight signals whose weights sum to one: subject (how much
+   this is an AI story minus how much it is an advert), customer pain, fit,
+   hook, recency, evidence, visual potential, conversion. Below `MIN_SCORE`
+   (0.55) the day stays blank.
 3. **Write** (`autenia/gemini.py`) — a grounded script that keeps facts and
    opinions apart and carries its sources.
 4. **Preflight** (`autenia/preflight.py`) — the last gate before spending:
-   duration, claims, estimated cost, cached assets.
+   duration, claims (a fact must name its source *inside the narration*, not
+   just in the `fuente` field), banned phrasing, estimated cost. Returns every
+   problem at once; a failed version is kept in `descartado` as the record.
 5. **Review** (`autenia/telegram.py`) — script, sources and cost to one chat,
    with `Aprobar`, `Pedir cambios`, `Rechazar`, `Regenerar`. Nothing renders
    before a human approves the words.
-6. **Render** (`autenia/render.py`) — narration per segment via
-   `autenia/voice.py`, then a background chosen in strict order: Autenia's own
-   footage (`autenia/assets.py`), a generated photograph (`autenia/images.py`),
-   or typography. Stills get a slow push so they do not read as a slideshow.
-   Captions are drawn with Pillow and overlaid. 1080×1920 H.264/AAC 30 fps.
+6. **Render** (`autenia/render.py`) — `prepare()` buys everything (footage,
+   photographs, one continuous narration cut at the real pauses), `compose()`
+   assembles it. Backgrounds in strict order: Autenia's own footage
+   (`autenia/assets.py`), generated footage (`autenia/clips.py`), a generated
+   photograph (`autenia/images.py`), then typography. Stills get a slow push so
+   they do not read as a slideshow. Captions are drawn with Pillow and
+   overlaid. 1080×1920 H.264/AAC 30 fps, normalised to −14 LUFS.
 7. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
    single refusal cannot hide two successes. Dry run by default.
 
@@ -73,16 +84,20 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 | `autenia/cycle.py` | The orchestration above, and the state transitions around it. |
 | `autenia/states.py` | The state machine. Every move is legal or it raises. |
 | `autenia/store.py` | SQLite via async SQLAlchemy. Deliberately separate from the upstream's Postgres. |
+| `autenia/models.py` | The schema: contents, versions, cost entries. Money in whole cents. |
 | `autenia/editorial.py` | Hard filters and scoring. |
 | `autenia/sources.py` | Grounded search, canonical URLs, publisher attribution. |
 | `autenia/gemini.py` | Model calls: judgement, script, TTS. |
 | `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default (voice `Iapetus`, chosen by ear), ElevenLabs opt-in. |
 | `autenia/render.py` | Script → 9:16 master, ffmpeg only. |
+| `autenia/formats.py` | How it is cut — cadence, captions, camera. Data, not code. |
+| `autenia/clips.py` | Generated footage, 8 s a piece, cached and reused by meaning. |
 | `autenia/assets.py` | Autenia's own footage library and coverage measurement. |
 | `autenia/images.py` | Generated scene photographs, cached on disk. ~0,03 € each. |
 | `autenia/publish.py` | Upload-Post, per network, dry-run by default. |
 | `autenia/ffmpeg.py` | Encoder selection and −14 LUFS loudness normalisation. |
 | `autenia/urls.py` | SSRF guard for URLs this machine fetches. |
+| `tools/muestras.py` | Renders one script in every montage and glues them into one reel. Touches neither the database nor the networks. |
 
 ### Things that will bite
 
@@ -91,6 +106,24 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
   short watchable while `data/library` fills up; it is not a substitute for real
   material, and a scene asking for "una pantalla de Autenia" is answered with the
   desk around the screen, never with an invented interface.
+- **Eight seconds is Veo's ceiling, not a preference.** The API refuses 10 and
+  12 outright ("between 4 and 8"), so more footage means *more clips*, never
+  longer ones. Cost is linear in seconds, so nothing is saved by buying four
+  short clips instead of two long ones — what a long clip buys is that the
+  median scene (4,6 s, measured over the first four scripts) fits inside it
+  without looping, and that its spare seconds run on into the next scene.
+- **A cut inside a clip must advance the clip.** `Shot.offset` keeps moving
+  while the framing jumps, so a fast montage reads as two cameras on one action.
+  Restarting the clip at each cut would show the same seconds twice and pay for
+  the privilege.
+- **The montage is a variable, not a rewrite.** `formats.py` holds the presets;
+  `AUTENIA_FORMATO` picks one. `render.prepare()` buys the footage, the
+  photographs and the voice, and `render.compose()` assembles them — so five
+  montages of the same script cost what one costs. Proposing a sixth is adding
+  an entry to `PRESETS`, not touching the renderer.
+- **A hook card takes its seconds from the hook, never adds them.** The voice is
+  cut into segments before the picture is planned, so a shot that appears from
+  nowhere slides every later caption out of sync with what is being said.
 - **Never let an image model write text.** Every prompt in `images.py` forbids
   letters, numbers and logos: generated lettering is gibberish and a viewer spots
   it instantly. The real words are drawn afterwards by Pillow.
@@ -105,6 +138,15 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 - **`renderizando` is the only state that spends money**, and it is not terminal.
   A version parked there blocks the next cycle for ever, so every path out of it
   must reach `publicado` or `fallido` — including dry runs.
+- **The cost ledger is written but not wired, and reading the code the other way
+  round is the easy mistake.** `store.record_cost`, `settle_cost`,
+  `month_spend_cents` and `assert_within_video_budget` all exist and are tested,
+  but nothing in `cycle.py` or `render.py` calls them: `cost_entries` is empty,
+  the monthly stop always sees zero, and preflight only ever gets the voice
+  estimate (0 on Gemini) — never the images or the Veo clips. What actually
+  caps spending today is `AUTENIA_MAX_NEW_CLIPS` plus the cache.
+  `clips.new_cost_cents()` and `images.cost_cents()` exist to feed that ledger;
+  connecting them is what turns the limits into limits.
 
 ## Environment Variables
 
@@ -125,11 +167,24 @@ key the browser holds.
   false.** Alone among the booleans it does not raise on a malformed value, it
   stays safe: a crash loop from a typo gets "fixed" by deleting the line, and
   that is how an unapproved video reaches the company's accounts.
-- `AUTENIA_INTERNAL_MODE` (default on) — single-user private deployment. Retained
-  because it still guards CORS and key resolution, though the public surfaces it
-  used to close no longer exist to be closed.
-- `AUTENIA_VOICE_PROVIDER`, `AUTENIA_TZ` (`Europe/Madrid`), `AUTENIA_DB_PATH`,
-  `AUTENIA_WORK_DIR`, `AUTENIA_LIBRARY_DIR`
+- `AUTENIA_INTERNAL_MODE` (default on) — single-user private deployment.
+  Declared, not enforced: the CORS and browser-key surfaces it used to guard
+  were removed rather than closed. It survives so a malformed value fails at
+  boot, and so anything new that would serve HTTP has a flag to consult.
+- `AUTENIA_VOICE_PROVIDER`, `AUTENIA_VOICE_NAME` (`Iapetus`), `AUTENIA_TZ`
+  (`Europe/Madrid`), `AUTENIA_DB_PATH`, `AUTENIA_WORK_DIR`,
+  `AUTENIA_LIBRARY_DIR`, `AUTENIA_IMAGE_CACHE`, `AUTENIA_CLIP_CACHE`
+- `FFMPEG_ENCODER` (`x264` | `nvenc` | `auto`), `AUDIO_NORMALIZE` (on) — the
+  encoder and the −14 LUFS normalisation in `autenia/ffmpeg.py`
+- `AUTENIA_VIDEO_CLIPS` — generated footage. **Off in the code, on in
+  `.env.example`**: the default stays cheap, the checked-in template turns it on
+  because the cache has already paid for itself.
+- `AUTENIA_MAX_NEW_CLIPS` — the hard ceiling on new footage per video (3 in the
+  code, 6 in `.env.example`); the format asks for what it needs under it
+- `AUTENIA_FORMATO` — `continuo` | `rapido` | `kinetico` | `titular` |
+  `marcado`. An unknown name falls back to the default rather than failing the
+  cycle: losing a day's video to a typo in the montage would be the worst trade
+  in the system
 - Limits: `AUTENIA_MAX_COST_PER_VIDEO` (0.50 €), `AUTENIA_MAX_COST_PER_MONTH`
   (25 €), `AUTENIA_MAX_DURATION_S` (55)
 

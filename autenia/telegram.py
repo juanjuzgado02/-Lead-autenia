@@ -44,10 +44,39 @@ class TelegramError(RuntimeError):
 class Action:
     """What the operator did, once it has been checked and attributed."""
 
-    kind: str          # "aprobar" | "cambios" | "rechazar" | "regenerar" | "texto"
+    kind: str          # "aprobar" | "cambios" | "rechazar" | "regenerar" |
+                       # "texto" | "tema"
     version_id: str | None
     text: str = ""
     callback_id: str | None = None
+
+
+#: How the operator asks for a script about something they choose, instead of
+#: whatever the news brought. Several spellings because this gets typed on a
+#: phone: a slash command autocompletes, "tema:" is what a person writes.
+BRIEF_COMMANDS = ("/guion", "/guión", "/tema", "guion:", "guión:", "tema:")
+
+
+def brief_of(text: str) -> str | None:
+    """The subject when a message is an explicit script request, else None.
+
+    Returns an empty string for a bare command, so the caller can answer with
+    instructions rather than silently doing nothing — a command that appears to
+    be ignored reads as a broken bot.
+    """
+    stripped = text.strip()
+    lowered = stripped.lower()
+    for command in BRIEF_COMMANDS:
+        if not lowered.startswith(command):
+            continue
+        rest = stripped[len(command):]
+        # Telegram appends the bot's username in groups: "/guion@autenia_bot …".
+        if rest.startswith("@"):
+            rest = rest.partition(" ")[2]
+        elif rest and not rest[0].isspace() and not command.endswith(":"):
+            continue    # "/guionada" is a word, not the command
+        return rest.strip(" :")
+    return None
 
 
 def _base() -> str:
@@ -82,6 +111,11 @@ def _escape(text: str) -> str:
     """Escape for Telegram's HTML parse mode."""
     return (str(text).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;"))
+
+
+#: Public alias. Other modules quote the operator's own words back into a
+#: message, and unescaped "<" turns a notification into a Telegram parse error.
+escape = _escape
 
 
 def review_text(script: dict, *, candidate=None, version_number: int = 1,
@@ -239,6 +273,10 @@ def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | 
     ``awaiting`` holds the version ids currently in review. Free text is only
     read as feedback when something is actually waiting — otherwise an idle
     "gracias" would be filed as instructions for the next render.
+
+    Text that starts with a brief command (``/guion``, ``tema:``…) is the one
+    exception: it is a request for a script on a subject the operator chose, so
+    it is honoured whether or not anything is in review.
     """
     callback = update.get("callback_query")
     if callback:
@@ -264,11 +302,21 @@ def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | 
     if not text:
         return None
 
-    waiting = awaiting or set()
+    # An explicit request beats everything: "/guion la factura electrónica"
+    # means write about that, even while another script sits in review.
+    brief = brief_of(text)
+    if brief is not None:
+        return Action(kind="tema", version_id=None, text=brief)
+
+    waiting = list(awaiting or ())
     if not waiting:
         return None
     # With several scripts in review, the newest is the one being discussed.
-    return Action(kind="texto", version_id=sorted(waiting)[-1], text=text)
+    # A set has no order to trust, so sort it; a sequence is taken as given,
+    # which is how the caller passes them in the order they were sent.
+    if isinstance(awaiting, (set, frozenset)):
+        waiting = sorted(waiting)
+    return Action(kind="texto", version_id=waiting[-1], text=text)
 
 
 async def poll(handler: Callable[[Action], Awaitable[None]], *,

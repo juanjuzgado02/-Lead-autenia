@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 
 from core_config import settings as autenia
@@ -131,6 +132,7 @@ async def handle(action: telegram.Action) -> None:
         "rechazar": _reject,
         "regenerar": _regenerate,
         "texto": _feedback,
+        "tema": _on_request,
     }
     handler = handlers.get(action.kind)
     if handler is None:
@@ -262,6 +264,79 @@ async def _rewrite(version_id: str, *, feedback: str | None) -> None:
 
 
 # --------------------------------------------------------------------------
+# A script the operator asked for
+# --------------------------------------------------------------------------
+
+_BRIEF_HELP = (
+    "✍️ <b>Dime sobre qué.</b>\n"
+    "Escribe <code>/guion</code> y el tema, por ejemplo:\n"
+    "<code>/guion lo que cuesta contestar a mano los mismos WhatsApps</code>\n\n"
+    "<i>Sin noticia detrás no hay fuentes, así que el guion no llevará cifras. "
+    "Si quieres un dato, dámelo con su origen: «según el INE, el 7,7%».</i>"
+)
+
+
+async def _on_request(action: telegram.Action) -> None:
+    """Write a script about whatever the operator typed.
+
+    Deliberately outside :func:`run_cycle` and outside its active-cycle guard.
+    That guard exists so the *scheduler* does not stack unapproved videos; a
+    person asking for a second script has already decided they want it, and
+    being told "ya hay un guion en revisión" in answer to a direct request
+    reads as the bot refusing to work.
+    """
+    brief = (action.text or "").strip()
+    if not brief:
+        await telegram.send_message(_BRIEF_HELP)
+        return
+
+    await telegram.send_message(
+        f"✍️ Escribiendo un guion sobre «{telegram.escape(brief[:90])}»…")
+
+    script, _usage = await gemini.write_brief_script(brief)
+    narration = gemini.narration_text(script)
+    check = preflight.check(script, narration=narration,
+                            estimated_cents=voice.estimate_cents(narration))
+
+    async with store.session() as sess:
+        content = await store.create_content(
+            sess,
+            title=(script.get("titulo") or brief)[:300],
+            # Not the hash of the words: the deduplication rule exists so the
+            # news is not produced twice, and asking twice for the same subject
+            # is a decision, not an accident.
+            topic_hash=f"peticion-{uuid.uuid4().hex[:24]}",
+            angle="petición del operador",
+        )
+        version = await sess.get(Version, content.current_version_id)
+        version.script = json.dumps(script, ensure_ascii=False)
+        version.sources = json.dumps(
+            {"url": "", "publisher": "petición del operador", "facts": [brief]},
+            ensure_ascii=False)
+        version.caption = script.get("caption", "")
+        await store.transition(sess, version, State.GUION)
+
+        if not check.ok:
+            await store.transition(sess, version, State.DESCARTADO,
+                                   note=f"petición: {brief[:200]} / {check}")
+            await telegram.send_message(
+                f"⚠️ Ese guion no pasa el preflight:\n{check}\n\n"
+                f"<i>Vuelve a pedírmelo con otro enfoque, o dame el dato con su "
+                f"fuente si quieres que lleve cifras.</i>")
+            return
+
+        await store.transition(sess, version, State.EN_REVISION)
+        version_id, number = version.id, version.number
+
+    await telegram.send_review(
+        script, version_id, version_number=number,
+        estimated_seconds=check.estimated_seconds,
+        estimated_cents=check.estimated_cents,
+        coverage=_expected_coverage(script),
+    )
+
+
+# --------------------------------------------------------------------------
 # Render and publish
 # --------------------------------------------------------------------------
 
@@ -325,19 +400,24 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
 # The listener
 # --------------------------------------------------------------------------
 
-async def awaiting_ids() -> set[str]:
+async def awaiting_ids() -> list[str]:
+    """Versions in review, oldest first.
+
+    A list rather than a set because the order carries meaning: a plain text
+    message is feedback on the most recent script, and with `/guion` there can
+    now be several waiting at once.
+    """
     async with store.session() as sess:
-        return {v.id for v in await store.awaiting_review(sess)}
+        return [v.id for v in await store.awaiting_review(sess)]
 
 
 async def listen() -> None:
     """Run the review bot until stopped."""
     await store.init_db()
-    pending: set[str] = await awaiting_ids()
+    pending: list[str] = await awaiting_ids()
 
     async def handler(action: telegram.Action) -> None:
         await handle(action)
-        pending.clear()
-        pending.update(await awaiting_ids())
+        pending[:] = await awaiting_ids()
 
     await telegram.poll(handler, awaiting=lambda: pending)

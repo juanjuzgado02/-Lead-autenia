@@ -177,3 +177,50 @@ def test_every_button_is_bound_to_the_version():
             for row in keyboard["inline_keyboard"] for button in row]
     assert data == ["aprobar:v-abc", "cambios:v-abc",
                     "regenerar:v-abc", "rechazar:v-abc"]
+
+
+# -- asking for a script by hand -------------------------------------------
+
+@pytest.mark.parametrize("escrito", [
+    "/guion la factura electrónica obligatoria",
+    "/guión la factura electrónica obligatoria",
+    "/tema la factura electrónica obligatoria",
+    "tema: la factura electrónica obligatoria",
+    "guion: la factura electrónica obligatoria",
+    "/guion@autenia_bot la factura electrónica obligatoria",
+    "  /guion   la factura electrónica obligatoria  ",
+])
+def test_a_brief_is_recognised_however_it_is_typed(escrito):
+    """This gets typed on a phone; the parser meets the operator halfway."""
+    action = parse_update(message(escrito), awaiting=[])
+    assert action.kind == "tema"
+    assert action.text == "la factura electrónica obligatoria"
+
+
+def test_a_brief_is_honoured_even_while_a_script_waits():
+    """A direct request outranks the review queue: it is not feedback."""
+    action = parse_update(message("/guion los albaranes"), awaiting=["v1"])
+    assert action == Action(kind="tema", version_id=None, text="los albaranes")
+
+
+def test_a_bare_command_asks_what_about():
+    """Answering nothing to a command reads as a broken bot."""
+    action = parse_update(message("/guion"), awaiting=[])
+    assert action == Action(kind="tema", version_id=None, text="")
+
+
+def test_a_word_that_merely_starts_like_the_command_is_not_one():
+    assert telegram.brief_of("/guionada de prueba") is None
+    assert telegram.brief_of("temazo: esto no es un comando") is None
+    assert telegram.brief_of("cambia el hook, por favor") is None
+
+
+def test_a_brief_from_any_other_chat_is_ignored():
+    assert parse_update(message("/guion lo que sea", chat_id=STRANGER),
+                        awaiting=[]) is None
+
+
+def test_feedback_lands_on_the_newest_script_in_review():
+    """`awaiting` arrives oldest first, so the last one is the live one."""
+    action = parse_update(message("acorta el hook"), awaiting=["viejo", "nuevo"])
+    assert action.version_id == "nuevo"

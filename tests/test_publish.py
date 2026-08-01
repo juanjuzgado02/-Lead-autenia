@@ -18,6 +18,17 @@ from core_config import ConfigError
 from autenia import publish
 
 
+@pytest.fixture(autouse=True)
+def every_network(monkeypatch):
+    """Test against all three unless a test says otherwise.
+
+    Without this the suite reads the deployment's own ``.env``: the day Autenia
+    narrowed publishing to YouTube, two tests about partial failure started
+    failing for a reason that had nothing to do with what they check.
+    """
+    monkeypatch.delenv("AUTENIA_REDES", raising=False)
+
+
 @pytest.fixture
 def video(tmp_path):
     path = tmp_path / "short.mp4"
@@ -221,3 +232,50 @@ def test_no_api_key_survives_into_a_persisted_payload(video):
 
 async def _noop(*args, **kwargs):
     """Skip the anti-burst pause so the suite stays fast."""
+
+
+# -- which networks, and how the video lands -------------------------------
+
+def test_without_the_variable_every_network_is_a_destination(monkeypatch):
+    monkeypatch.delenv("AUTENIA_REDES", raising=False)
+    assert publish.configured() == publish.PLATFORMS
+
+
+def test_the_operator_can_narrow_it_to_one(monkeypatch):
+    """A free plan counts calls, and an unconnected network spends one to fail."""
+    monkeypatch.setenv("AUTENIA_REDES", "youtube")
+    assert publish.configured() == ("youtube",)
+
+
+@pytest.mark.parametrize("escrito", ["youtube, tiktok", "YouTube;TikTok",
+                                     " youtube , tiktok "])
+def test_a_list_is_read_however_it_is_written(monkeypatch, escrito):
+    monkeypatch.setenv("AUTENIA_REDES", escrito)
+    assert publish.configured() == ("youtube", "tiktok")
+
+
+def test_a_typo_publishes_less_never_more(monkeypatch):
+    """The two ways of being wrong are not symmetrical."""
+    monkeypatch.setenv("AUTENIA_REDES", "youtub")
+    assert publish.configured() == ()
+
+
+@pytest.mark.asyncio
+async def test_publishing_nowhere_is_refused_rather_than_silently_fine(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTENIA_REDES", "youtub")
+    monkeypatch.setenv("AUTENIA_PUBLISH_DRY_RUN", "true")
+    video = tmp_path / "short.mp4"
+    video.write_bytes(b"0" * 2048)
+    with pytest.raises(publish.PublishError):
+        await publish.publish(str(video), version_id="v1", title="t", caption="c")
+
+
+@pytest.mark.parametrize("valor,esperado", [
+    ("unlisted", "unlisted"), ("private", "private"), ("public", "public"),
+    ("PUBLICO", "public"), ("", "public"),
+])
+def test_youtube_privacy_falls_back_to_public(monkeypatch, valor, esperado):
+    monkeypatch.setenv("AUTENIA_YOUTUBE_PRIVACY", valor)
+    assert publish.youtube_privacy() == esperado
+    assert publish._payload("youtube", user="autenia", title="t",
+                            body="c")["privacyStatus"] == esperado

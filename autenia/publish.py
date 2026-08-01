@@ -35,8 +35,36 @@ from core_config import settings as autenia
 
 API = "https://api.upload-post.com/api/upload"
 
-#: The three destinations. Order is the order they are attempted in.
+#: Every destination this module knows how to post to.
 PLATFORMS = ("tiktok", "instagram", "youtube")
+
+
+def configured() -> tuple[str, ...]:
+    """The networks this deployment posts to, in the order they are attempted.
+
+    A variable rather than a constant because which networks are *connected* is
+    an account fact, not a code fact: on a free Upload-Post plan the calls are
+    counted, so posting to a network whose account is not linked spends one to
+    be told so.
+
+    An unrecognised name is dropped rather than defaulting back to all three.
+    The two ways to be wrong here are not symmetrical: publishing to fewer
+    networks than intended is a video the operator uploads by hand, publishing
+    to more is a post on an account nobody meant to touch.
+    """
+    raw = os.environ.get("AUTENIA_REDES", "").strip()
+    if not raw:
+        return PLATFORMS
+    asked = [name.strip().lower() for name in raw.replace(";", ",").split(",")]
+    return tuple(name for name in asked if name in PLATFORMS)
+
+
+#: How a YouTube upload lands. ``public`` is the point of the channel, but a
+#: first real post is worth seeing on the platform before the world does, and
+#: that costs the same one API call either way.
+def youtube_privacy() -> str:
+    choice = (os.environ.get("AUTENIA_YOUTUBE_PRIVACY") or "public").strip().lower()
+    return choice if choice in ("public", "unlisted", "private") else "public"
 
 #: What each network truncates silently or rejects outright. YouTube's 100-char
 #: title is the tight one; the rest are generous but not infinite.
@@ -119,7 +147,7 @@ def _payload(platform: str, *, user: str, title: str, body: str) -> dict:
     elif platform == "youtube":
         data["youtube_title"] = data["title"]
         data["youtube_description"] = caption
-        data["privacyStatus"] = "public"
+        data["privacyStatus"] = youtube_privacy()
     return data
 
 
@@ -172,16 +200,21 @@ async def _post_one(client: httpx.AsyncClient, platform: str, *, user: str,
 
 
 async def publish(video_path: str, *, version_id: str, title: str, caption: str,
-                  platforms: tuple[str, ...] = PLATFORMS) -> list[Result]:
+                  platforms: tuple[str, ...] | None = None) -> list[Result]:
     """Post one approved video to each network, independently.
 
     Returns one :class:`Result` per platform, in the order given. It never
     raises for a network that refused — that is a result, not an exception —
     and only raises when publishing could not be attempted at all.
     """
+    platforms = configured() if platforms is None else platforms
     unknown = [p for p in platforms if p not in PLATFORMS]
     if unknown:
         raise PublishError(f"unknown platform(s): {', '.join(unknown)}")
+    if not platforms:
+        raise PublishError(
+            "no hay ninguna red en AUTENIA_REDES; el vídeo está renderizado "
+            "pero no se ha enviado a ningún sitio")
     if not os.path.isfile(video_path):
         raise PublishError(f"there is no video at {video_path}")
     if not title.strip() or not caption.strip():

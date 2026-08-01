@@ -372,7 +372,16 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
         outcomes = await publish.publish(
             result.path, version_id=version_id, title=title, caption=caption)
     except publish.PublishError as exc:
-        await telegram.send_message(f"❌ No se ha podido publicar: {exc}")
+        # `renderizando` is not terminal: a version left here blocks every
+        # future cycle for ever. Publishing failing before it could even be
+        # attempted is still an end to this version, so it says so.
+        async with store.session() as sess:
+            fresh = await sess.get(Version, version_id)
+            await store.transition(sess, fresh, State.FALLIDO, note=str(exc))
+        await telegram.send_message(
+            f"❌ No se ha podido publicar: {exc}\n"
+            f"<i>El vídeo está renderizado y lo tienes arriba; puedes subirlo "
+            f"a mano.</i>")
         return
 
     lines = [outcome.summary for outcome in outcomes]

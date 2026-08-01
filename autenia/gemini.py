@@ -24,8 +24,18 @@ from core_config import settings as autenia
 BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 #: Cheap and good enough for editorial judgment and scripts.
-TEXT_MODEL = "gemini-2.5-flash"
-#: Speech. Verified working in Spanish at 24 kHz mono PCM.
+#:
+#: Was ``gemini-2.5-flash`` until 2026-08-01, when every search started failing
+#: with a 404: *"no longer available to new users"*. The name is still in the
+#: model listing, which is why the failure reads as a bug rather than a
+#: retirement — the listing is not the same thing as what a key may call.
+#: Pinned to a version rather than to ``gemini-flash-latest``: the prompts here
+#: are tuned by hand, and an alias that moves under them would change the
+#: editorial output on a morning nobody touched the repository.
+TEXT_MODEL = "gemini-3.6-flash"
+#: Speech. Verified working in Spanish at 24 kHz mono PCM. Deliberately left on
+#: 2.5 while the text model moved: Iapetus was chosen by ear on this model, and
+#: a newer one is a different voice for the brand, not an upgrade.
 TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 #: Gemini's free tier bills nothing, so cost is recorded as zero rather than

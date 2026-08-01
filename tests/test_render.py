@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from autenia import render
+from autenia import formats, render
 from autenia.render import Segment
 
 
@@ -124,7 +124,8 @@ async def test_image_generation_can_be_switched_off(tmp_path, monkeypatch):
     monkeypatch.setattr(render.images, "for_scenes", spy)
     monkeypatch.setattr(render, "narrate", _noop)
     monkeypatch.setattr(render, "compose",
-                        lambda segments, out, workdir: render.Rendered(out, 1.0, 0.0, segments))
+                        lambda segments, out, workdir, **_:
+                        render.Rendered(out, 1.0, 0.0, segments))
 
     await render.render({"hook": "Hola."}, out_path=str(tmp_path / "o.mp4"),
                         workdir=str(tmp_path), generate_images=False)
@@ -134,3 +135,168 @@ async def test_image_generation_can_be_switched_off(tmp_path, monkeypatch):
 async def _noop(segments, workdir):
     for segment in segments:
         segment.duration_s = 1.0
+
+
+# -- montaje ---------------------------------------------------------------
+
+def test_a_long_take_is_one_shot_when_the_format_does_not_cut():
+    segment = Segment(kind="escena", text="t", visual_request="v",
+                      clip_path="/cache/a.mp4", duration_s=6.0)
+    assert len(segment.shots(formats.CONTINUO)) == 1
+
+
+def test_cutting_footage_advances_through_the_clip_instead_of_repeating_it():
+    """The point of the cut is a second angle, not the same seconds twice."""
+    segment = Segment(kind="escena", text="t", visual_request="v",
+                      clip_path="/cache/a.mp4", duration_s=6.0, clip_offset=2.0)
+    shots = segment.shots(formats.RAPIDO)
+
+    assert len(shots) == 3
+    assert [round(s.offset, 2) for s in shots] == [2.0, 4.0, 6.0]
+    assert sum(s.seconds for s in shots) == pytest.approx(6.0)
+    assert shots[0].punch != shots[1].punch, "a cut with no change is not a cut"
+
+
+def test_a_scene_barely_over_the_limit_is_not_cut_into_a_flash():
+    segment = Segment(kind="escena", text="t", visual_request="v",
+                      clip_path="/cache/a.mp4", duration_s=2.1)
+    assert len(segment.shots(formats.RAPIDO)) == 1
+
+
+def test_shots_always_add_up_to_the_spoken_length():
+    """Anything else desynchronises the picture from the voice for the rest."""
+    segment = Segment(kind="escena", text="t", visual_request="v",
+                      image_paths=["/a.jpg", "/b.jpg"], duration_s=5.3)
+    for fmt in formats.PRESETS.values():
+        assert sum(s.seconds for s in segment.shots(fmt)) == pytest.approx(5.3)
+
+
+# -- subtítulos ------------------------------------------------------------
+
+def test_the_calm_format_shows_the_whole_sentence_at_once():
+    chunks = render._caption_chunks("Una frase entera de prueba.", 4.0,
+                                    formats.CONTINUO)
+    assert chunks == [("Una frase entera de prueba.", 0.0, 4.0)]
+
+
+def test_grouped_captions_cover_the_segment_without_gaps_or_overlap():
+    text = "El absentismo laboral alcanzó un máximo histórico del siete coma siete"
+    chunks = render._caption_chunks(text, 6.0, formats.RAPIDO)
+
+    assert len(chunks) > 1
+    assert chunks[0][1] == 0.0
+    assert chunks[-1][2] == pytest.approx(6.0)
+    for before, after in zip(chunks, chunks[1:]):
+        assert before[2] == pytest.approx(after[1])
+    assert " ".join(c[0] for c in chunks) == text
+
+
+def test_no_caption_group_is_left_with_a_single_orphan_word():
+    chunks = render._caption_chunks("una dos tres cuatro cinco", 5.0,
+                                    formats.RAPIDO)
+    assert len(chunks[-1][0].split()) > 1
+
+
+def test_a_group_ends_where_the_sentence_does():
+    """"el 90% de los" torn across a cut makes the eye stop to repair it."""
+    chunks = render._caption_chunks(
+        "No es solo un PDF, es un formato que exige la ley.", 6.0,
+        formats.TITULAR)
+    assert chunks[0][0].endswith(","), [c[0] for c in chunks]
+
+
+# -- cifras ----------------------------------------------------------------
+
+def test_only_figures_are_picked_out():
+    assert render._is_figure("7,7%")
+    assert render._is_figure("2026")
+    assert render._is_figure("1.200€")
+    assert not render._is_figure("absentismo")
+    assert not render._is_figure("obligatoria")
+
+
+def test_a_figure_is_painted_in_the_brand_colour(tmp_path):
+    """Colour everything and nothing is emphasised, so this checks both ways."""
+    from PIL import Image
+
+    def colours(text, fmt):
+        path, _ = caption = render.caption_png(
+            text, str(tmp_path / f"{fmt.name}.png"), fmt=fmt)
+        assert caption
+        image = Image.open(path).convert("RGBA")
+        return {image.getpixel((x, y))[:3]
+                for x in range(image.width) for y in range(image.height)
+                if image.getpixel((x, y))[3] > 200}
+
+    accent = tuple(int(render.ACCENT[i:i + 2], 16) for i in (1, 3, 5))
+    assert any(_close(c, accent) for c in colours("Sube al 7,7%", formats.MARCADO))
+    assert not any(_close(c, accent)
+                   for c in colours("Sube al 7,7%", formats.RAPIDO)), (
+        "a format that does not ask for emphasis must not invent it")
+
+
+def _close(a, b, tolerance=26):
+    return all(abs(x - y) <= tolerance for x, y in zip(a, b))
+
+
+# -- gancho escrito --------------------------------------------------------
+
+def test_the_hook_card_takes_its_seconds_from_the_hook_not_from_the_video():
+    """Adding seconds would slide the whole narration out of sync."""
+    segment = Segment(kind="hook", text="¿Pierdes horas en papeleo?",
+                      visual_request="v", clip_path="/cache/a.mp4",
+                      duration_s=4.0)
+    shots = segment.shots(formats.TITULAR)
+
+    assert shots[0].background is None, "the hook opens on type"
+    assert shots[0].seconds == pytest.approx(formats.TITULAR.hook_card)
+    assert sum(s.seconds for s in shots) == pytest.approx(4.0)
+    assert all(s.background for s in shots[1:]), "the rest is footage"
+
+
+def test_a_hook_too_short_to_share_is_left_whole():
+    segment = Segment(kind="hook", text="Ya está aquí.", visual_request="v",
+                      clip_path="/cache/a.mp4", duration_s=1.2)
+    assert len(segment.shots(formats.TITULAR)) == 1
+
+
+def test_only_the_hook_gets_the_card():
+    segment = Segment(kind="escena", text="Una escena cualquiera.",
+                      visual_request="v", clip_path="/cache/a.mp4",
+                      duration_s=4.0)
+    assert all(s.background for s in segment.shots(formats.TITULAR))
+
+
+# -- barra y marca ---------------------------------------------------------
+
+def test_the_progress_bar_knows_where_its_shot_starts(tmp_path):
+    """`t` restarts at every cut; a bar that ignored that would refill each time."""
+    _, chain = render._furniture(formats.TITULAR, str(tmp_path), 12.0, 24.0)
+    assert "drawbox" in chain
+    assert "12.000+t" in chain.replace(" ", "")
+    assert "24.000" in chain
+
+
+def test_a_format_without_furniture_adds_nothing_to_the_graph(tmp_path):
+    args, chain = render._furniture(formats.CONTINUO, str(tmp_path), 3.0, 20.0)
+    assert (args, chain) == ([], "")
+
+
+def test_the_bar_never_overfills_on_the_last_shot(tmp_path):
+    _, chain = render._furniture(formats.TITULAR, str(tmp_path), 24.0, 24.0)
+    assert "min(1," in chain
+
+
+def test_the_kinetic_caption_carries_its_own_outline_because_it_has_no_plate(tmp_path):
+    """White type over a bright photograph disappears without one."""
+    from PIL import Image
+
+    path, _ = render.caption_png("Papeleo", str(tmp_path / "k.png"),
+                                 fmt=formats.KINETICO)
+    image = Image.open(path)
+    corner = image.getpixel((0, 0))
+
+    assert formats.KINETICO.plate_alpha == 0
+    assert corner[3] == 0, "there must be no plate behind kinetic type"
+    assert any(image.getpixel((x, image.height // 2))[3] > 0
+               for x in range(image.width)), "the words must still be drawn"

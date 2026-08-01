@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from core_config import settings as autenia
 
 from . import assets as asset_lib
-from . import (editorial, gemini, preflight, publish, render, sources, store,
-               telegram, voice)
+from . import (editorial, formats, gemini, preflight, publish, render, sources,
+               store, telegram, voice)
 from .models import Content, Version
 from .states import State, StateError
 
@@ -272,7 +272,8 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
     try:
         result = await render.render(
             script, out_path=out_path, workdir=workdir,
-            library_dir=LIBRARY_DIR if os.path.isdir(LIBRARY_DIR) else None)
+            library_dir=LIBRARY_DIR if os.path.isdir(LIBRARY_DIR) else None,
+            fmt=formats.current())
     except Exception as exc:  # noqa: BLE001 - any failure must land in the log
         async with store.session() as sess:
             fresh = await sess.get(Version, version_id)

@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from core_config import settings as autenia
 
 from . import assets as asset_lib
-from . import (editorial, formats, gemini, preflight, publish, render, sources,
-               store, telegram, voice)
+from . import (arreglo, editorial, formats, gemini, preflight, publish, render,
+               sources, store, telegram, voice)
 from .models import Content, Version
 from .states import State, StateError
 
@@ -135,6 +135,7 @@ async def handle(action: telegram.Action) -> None:
         "tema": _on_request,
         "publicar": _publish_video,
         "descartar": _discard_video,
+        "defectuoso": _ask_for_defect,
         "ocioso": _idle_text,
     }
     handler = handlers.get(action.kind)
@@ -219,15 +220,15 @@ async def _feedback(action: telegram.Action) -> None:
 
     Sobre un guion es una corrección de las palabras. Sobre un vídeo ya
     renderizado es un defecto de lo que salió —"la mano tiene seis dedos"— y eso
-    no se arregla reescribiendo: se arregla volviendo a montar el mismo guion,
-    ahora que el material defectuoso ya no está en el caché.
+    no se arregla reescribiendo: se arregla comprando la capa que falla y
+    montando otra vez, que cuesta una fracción de lo que costó el vídeo.
     """
     async with store.session() as sess:
         version = await sess.get(Version, action.version_id)
         estado = State(version.state) if version else None
 
     if estado is State.REVISION_VIDEO:
-        await _video_defect(action)
+        await _repair_video(action)
         return
     await _rewrite(action.version_id, feedback=action.text)
 
@@ -251,14 +252,124 @@ async def _idle_text(action: telegram.Action) -> None:
         "una corrección y lo aplico.</i>")
 
 
-async def _video_defect(action: telegram.Action) -> None:
-    """El vídeo tenía un fallo: se tira y el mismo guion vuelve a la cola.
+async def _ask_for_defect(action: telegram.Action) -> None:
+    """El botón «Defectuoso»: sólo pide el defecto, no toca nada todavía.
 
-    No se reescribe el guion, que no tenía la culpa, y no se republica el vídeo,
-    que no se puede arreglar. Lo que se hace es proponer otra vez las mismas
-    palabras: aprobar de nuevo vuelve a montar, y el metraje que causó el fallo
-    ya lo habrá quitado el revisor —o lo quitas tú— así que la segunda pasada
-    coge otro plano.
+    Un botón de Telegram no puede recoger texto, así que esto abre la
+    conversación y el mensaje siguiente es el que trabaja — el mismo camino que
+    «Pedir cambios» sobre un guion.
+    """
+    version = await _load(action.version_id, expect=State.REVISION_VIDEO)
+    if version is None:
+        await telegram.answer_callback(action.callback_id,
+                                       "Ese vídeo ya estaba resuelto")
+        return
+    await telegram.answer_callback(action.callback_id)
+    await telegram.send_message(
+        "🔧 <b>¿Qué le has visto?</b>\n"
+        "Escríbelo tal cual: «repite una palabra», «en la escena 2 la mano "
+        "tiene seis dedos», «la foto no pega con lo que dice».\n\n"
+        "<i>Se vuelve a comprar sólo eso — una locución, o el plano de esa "
+        "escena — y se monta otra vez. El resto del vídeo ya está pagado y no "
+        "se toca.</i>")
+
+
+async def _repair_video(action: telegram.Action) -> None:
+    """Comprar la capa que falla y montar otra vez. Nada más.
+
+    Un vídeo casi bueno es el caso normal, no la excepción, y hasta ahora
+    costaba lo mismo que uno malo: tirarlo entero y volver a pagar la voz, las
+    fotos y el metraje. Pero un vídeo son tres capas montadas al final, y el
+    plan del render dice cuál es cuál, así que un defecto de voz cuesta una
+    locución y uno de plano cuesta un plano.
+
+    Se pasa por ``renderizando`` porque esto gasta: ahí es donde se mira el
+    presupuesto, y donde una segunda pulsación se encuentra la puerta cerrada.
+    Y de ahí no se sale a ningún sitio que no sea otra vez el vídeo delante de
+    una persona — el arreglo no publica, como no publica un render.
+    """
+    defecto = (action.text or "").strip()
+    version = await _load(action.version_id, expect=State.REVISION_VIDEO)
+    if version is None:
+        return
+
+    workdir = os.path.join(WORK_ROOT, action.version_id)
+    segmentos = render.load_plan(workdir)
+    if not segmentos:
+        # Un vídeo de antes de que existiera el plan. El camino largo sigue ahí.
+        await _defect_rewrites(action)
+        return
+
+    arreglo_ = await arreglo.clasificar(defecto, segmentos)
+    if not arreglo_.se_puede:
+        await telegram.send_message(
+            f"📝 Eso no se arregla montando otra vez: «{telegram.escape(arreglo_.motivo[:120])}» "
+            f"está en las palabras, y las palabras ya las aprobaste.\n"
+            f"<i>Te devuelvo el guion para que lo corrijas.</i>")
+        await _defect_rewrites(action)
+        return
+
+    async with store.session() as sess:
+        fresh = await sess.get(Version, action.version_id)
+        try:
+            await store.transition(sess, fresh, State.RENDERIZANDO,
+                                   note=f"arreglando: {defecto[:180]}")
+        except (StateError, store.BudgetExceededError) as exc:
+            await telegram.send_message(f"⚠️ No se puede arreglar: {exc}")
+            return
+        script = json.loads(fresh.script) if fresh.script else {}
+        caption = fresh.caption or ""
+
+    await telegram.send_message(
+        f"🔧 Anotado: «{telegram.escape(defecto[:120])}».\n"
+        f"<i>Es la {arreglo_.capa}. Compro eso y lo monto otra vez.</i>")
+
+    fmt = formats.current()
+    out_path = os.path.join(workdir, "short.mp4")
+    # Se monta al lado y se sustituye al final. Un arreglo que se cae a medias
+    # no puede llevarse por delante el vídeo que había, que era publicable.
+    provisional = os.path.join(workdir, "arreglado.mp4")
+    try:
+        rehecho = await arreglo.aplicar(arreglo_, segmentos, workdir=workdir,
+                                        script=script, fmt=fmt)
+        result = render.compose(segmentos, provisional, workdir, fmt=fmt)
+        os.replace(provisional, out_path)
+        result.path = out_path
+    except Exception as exc:  # noqa: BLE001 - cualquier fallo tiene que aterrizar
+        # De vuelta al segundo control, no a `fallido`: el vídeo de antes sigue
+        # ahí y sigue siendo publicable. Un intento de mejorarlo no puede ser
+        # la forma de perderlo.
+        async with store.session() as sess:
+            fresh = await sess.get(Version, action.version_id)
+            await store.transition(sess, fresh, State.REVISION_VIDEO,
+                                   note=f"arreglo fallido: {str(exc)[:180]}")
+        await telegram.send_message(
+            f"❌ El arreglo ha fallado: {exc}\n"
+            f"<i>El vídeo que tenías sigue intacto y sus botones siguen "
+            f"valiendo.</i>")
+        return
+
+    async with store.session() as sess:
+        fresh = await sess.get(Version, action.version_id)
+        fresh.video_path = result.path
+        fresh.duration_s = result.duration_s
+        await store.transition(sess, fresh, State.REVISION_VIDEO,
+                               note=f"arreglado: {rehecho}")
+
+    await telegram.send_video(
+        result.path,
+        f"🔧 <b>{rehecho}.</b>\n" + _publish_preview(script, caption, result),
+        width=render.WIDTH, height=render.HEIGHT, duration=result.duration_s,
+        version_id=action.version_id)
+
+
+async def _defect_rewrites(action: telegram.Action) -> None:
+    """El camino largo: se tira el vídeo y el mismo guion vuelve a la cola.
+
+    Para lo que no se arregla montando —las palabras— y para los vídeos que se
+    renderizaron antes de que hubiera un plan que consultar. No se reescribe el
+    guion, que puede no tener la culpa: se propone otra vez, y aprobarlo vuelve
+    a montar sin el material que causó el fallo.
     """
     defecto = (action.text or "").strip()
 

@@ -235,17 +235,23 @@ def test_feedback_lands_on_the_newest_script_in_review():
 
 # -- the second gate -------------------------------------------------------
 
-@pytest.mark.parametrize("kind", ["publicar", "descartar"])
+@pytest.mark.parametrize("kind", ["publicar", "descartar", "defectuoso"])
 def test_the_video_buttons_are_bound_to_their_version(kind):
     action = parse_update(callback(f"{kind}:v-video"))
     assert action == Action(kind=kind, version_id="v-video", callback_id="cb1")
 
 
-def test_the_video_keyboard_offers_only_the_two_real_choices():
-    """The money is already spent: regenerating is not one of the options."""
+def test_the_video_keyboard_offers_the_three_real_choices():
+    """Sale, no sale, o casi — y "casi" es el caso normal, no la excepción.
+
+    Sigue sin haber "regenerar": el dinero está gastado, y volver a empezar es
+    justo lo que "Defectuoso" existe para no hacer. Lo que compra un arreglo es
+    la capa que falla, no el vídeo entero.
+    """
     keyboard = telegram._video_keyboard("v-abc")
     data = [b["callback_data"] for row in keyboard["inline_keyboard"] for b in row]
-    assert data == ["publicar:v-abc", "descartar:v-abc"]
+    assert data == ["publicar:v-abc", "descartar:v-abc", "defectuoso:v-abc"]
+    assert not any("regenerar" in d for d in data)
 
 
 def test_a_video_button_from_any_other_chat_is_ignored():

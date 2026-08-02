@@ -25,6 +25,10 @@ LEGAL = [
     (State.REVISION_VIDEO, State.PUBLICADO),
     (State.REVISION_VIDEO, State.DESCARTADO),
     (State.REVISION_VIDEO, State.FALLIDO),
+    # Arreglar un vídeo casi bueno: se compra la capa que falla y se monta otra
+    # vez. Vuelve por la puerta del gasto porque gasta, y es esa puerta la que
+    # comprueba el presupuesto y la que impide dos arreglos a la vez.
+    (State.REVISION_VIDEO, State.RENDERIZANDO),
 ]
 
 
@@ -46,8 +50,6 @@ def test_legal_transitions_are_allowed(current, target):
     (State.RENDERIZANDO, State.RENDERIZANDO),
     # The second gate is not optional: a render cannot publish itself.
     (State.RENDERIZANDO, State.PUBLICADO),
-    # And a video waiting to be let out cannot go back for another render.
-    (State.REVISION_VIDEO, State.RENDERIZANDO),
 ])
 def test_illegal_transitions_raise(current, target):
     assert not can_transition(current, target)

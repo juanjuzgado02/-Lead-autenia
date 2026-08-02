@@ -1,9 +1,10 @@
 """Turning a script into a 9:16 video.
 
-The narration is synthesised **one segment at a time** rather than as a single
-take. That costs nothing extra and buys two things: exact per-scene durations,
-so the visuals cut where the sentence ends instead of where an estimate guessed;
-and reuse, so feedback on one scene re-synthesises that scene alone.
+The narration is synthesised as **one continuous take** and cut afterwards at
+the pauses the voice really made. One call per line costs the same and sounds
+like several narrators taking turns; cutting at real silences gives the same
+exact per-scene durations, so the visuals still change where the sentence ends
+rather than where an estimate guessed.
 
 Where a scene has no matching footage the background is a typographic card.
 That is a deliberate fallback, not a placeholder: showing an unrelated clip, or
@@ -28,7 +29,7 @@ import re
 import shutil
 import subprocess
 import textwrap
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 
 from . import assets as asset_lib
 from . import ffmpeg as ff
@@ -861,7 +862,87 @@ async def prepare(script: dict, *, workdir: str,
     # Which of Autenia's voices reads this one is an editorial rule about the
     # script, so it is decided from the script rather than from the renderer.
     await narrate(segments, workdir, voice.for_script(script))
+    save_plan(segments, workdir)
     return segments
+
+
+async def buy_visuals(segments: list[Segment], indices: list[int], *,
+                      fmt: Format | None = None) -> None:
+    """Metraje o fotos para unas escenas concretas, dejando las demás en paz.
+
+    Lo mismo que hace :func:`prepare`, acotado a una lista de escenas: es lo que
+    permite arreglar un plano defectuoso sin volver a comprar los otros cinco.
+    Pasa por las mismas funciones, que miran el caché antes de gastar, así que
+    una escena que se parece a algo ya filmado sale gratis; y el presupuesto es
+    el número de escenas que han quedado sin plano, nunca el del vídeo entero.
+    """
+    fmt = fmt or formats.DEFAULT
+    huerfanas = [segments[i] for i in indices]
+    if not huerfanas:
+        return
+
+    if clips.enabled():
+        footage = await clips.for_scenes(
+            [s.visual_request for s in huerfanas],
+            [s.text for s in huerfanas],
+            budget=min(len(huerfanas), clips.MAX_NEW_PER_VIDEO))
+        for segment, clip in zip(huerfanas, footage):
+            segment.clip_path = clip
+        # Con las duraciones ya medidas, esto reparte los segundos sobrantes del
+        # clip nuevo entre las escenas siguientes igual que en un render normal.
+        _stretch_clips(segments)
+
+    sin_nada = [s for s in huerfanas if not s.asset_path and not s.clip_path]
+    if sin_nada:
+        pictures = await images.for_scenes(
+            [s.visual_request for s in sin_nada], [s.text for s in sin_nada],
+            [_shots_wanted(s.text, fmt) for s in sin_nada])
+        for segment, taken in zip(sin_nada, pictures):
+            segment.image_paths = list(taken)
+
+
+#: Lo que se compró y cómo quedó repartido, junto al vídeo que salió de ello.
+PLAN = "plan.json"
+
+
+def save_plan(segments: list[Segment], workdir: str) -> str:
+    """Dejar por escrito qué metraje, qué fotos y qué trozo de voz usó cada escena.
+
+    Sin esto un vídeo terminado es un mp4 y nada más: para cambiarle una sola
+    cosa —la locución, o el plano de una escena— habría que volver a planificarlo
+    entero, y volver a planificarlo entero es volver a pagarlo entero. El plan
+    convierte "arréglame esto" en comprar una pieza en vez de seis.
+    """
+    path = os.path.join(workdir, PLAN)
+    parcial = f"{path}.part"
+    with open(parcial, "w", encoding="utf-8") as handle:
+        json.dump([asdict(segment) for segment in segments], handle,
+                  ensure_ascii=False, indent=2)
+    os.replace(parcial, path)
+    return path
+
+
+def load_plan(workdir: str) -> list[Segment] | None:
+    """El plan de un render anterior, o ``None`` si no se puede reconstruir.
+
+    Devuelve ``None`` y no lanza: un vídeo de antes de que esto existiera, o un
+    plan a medio escribir, tiene que poder caer en el camino largo en vez de
+    dejar al operador sin respuesta.
+    """
+    try:
+        with open(os.path.join(workdir, PLAN), encoding="utf-8") as handle:
+            guardado = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(guardado, list) or not guardado:
+        return None
+
+    validos = {campo.name for campo in fields(Segment)}
+    try:
+        return [Segment(**{k: v for k, v in datos.items() if k in validos})
+                for datos in guardado]
+    except (TypeError, AttributeError):
+        return None
 
 
 async def render(script: dict, *, out_path: str, workdir: str,

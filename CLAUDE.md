@@ -75,10 +75,15 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
    they do not read as a slideshow. Captions are drawn with Pillow and
    overlaid. 1080×1920 H.264/AAC 30 fps, normalised to −14 LUFS.
 7. **Second gate** (`revision_video`) — the finished video goes back to the
-   chat with `Publicar` / `No publicar`. Rendering never publishes on its own:
-   approving a script is not the same as having seen what came out of it, and
-   the platform is the one place with no undo.
-8. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
+   chat with `Publicar` / `No publicar` / `Defectuoso`. Rendering never
+   publishes on its own: approving a script is not the same as having seen what
+   came out of it, and the platform is the one place with no undo.
+8. **Repair** (`autenia/arreglo.py`) — `Defectuoso` asks what is wrong and buys
+   only that. A video is three layers assembled at the end, and `plan.json`
+   records which is which, so a stutter costs one narration and six fingers cost
+   one scene's shot. A defect in the *words* is the one that cannot be repaired
+   this way: those were approved, so it goes back to the script gate.
+9. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
    single refusal cannot hide two successes. `AUTENIA_REDES` picks which
    networks (Autenia posts to YouTube only; the rest are uploaded by hand from
    the video Telegram delivers). Dry run by default.
@@ -97,7 +102,8 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 | `autenia/sources.py` | Grounded search, canonical URLs, publisher attribution. |
 | `autenia/gemini.py` | Model calls: judgement, script, TTS. |
 | `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default (voice `Iapetus`, chosen by ear), ElevenLabs opt-in. Also listens to the take it bought and asks for another if it stutters. |
-| `autenia/render.py` | Script → 9:16 master, ffmpeg only. |
+| `autenia/render.py` | Script → 9:16 master, ffmpeg only. Writes `plan.json` next to the video: what each scene bought. |
+| `autenia/arreglo.py` | Which layer a reported defect belongs to, and buying only that one. |
 | `autenia/formats.py` | How it is cut — cadence, captions, camera. Data, not code. |
 | `autenia/clips.py` | Generated footage, 8 s a piece, cached and reused by meaning. |
 | `autenia/assets.py` | Autenia's own footage library and coverage measurement. |
@@ -158,7 +164,12 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
   `revision_video` is terminal. A version parked in either blocks the next cycle
   for ever, so every path out of them must reach `publicado`, `descartado` or
   `fallido` — including dry runs and including a publish that failed before it
-  could be attempted.
+  could be attempted. A repair is the one loop between them
+  (`revision_video → renderizando → revision_video`) and it goes through the
+  spending door on purpose: that is where the budget is checked and where a
+  second tap on `Defectuoso` finds the door shut. A repair that fails goes back
+  to `revision_video`, never to `fallido` — the video it was trying to improve
+  was publishable, and trying to improve something is not how you lose it.
 - **The cost ledger is written but not wired, and reading the code the other way
   round is the easy mistake.** `store.record_cost`, `settle_cost`,
   `month_spend_cents` and `assert_within_video_budget` all exist and are tested,

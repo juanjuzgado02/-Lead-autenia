@@ -45,7 +45,8 @@ class Action:
     """What the operator did, once it has been checked and attributed."""
 
     kind: str          # "aprobar" | "cambios" | "rechazar" | "regenerar" |
-                       # "texto" | "tema" | "publicar" | "descartar"
+                       # "texto" | "tema" | "publicar" | "descartar" |
+                       # "defectuoso" | "ocioso"
     version_id: str | None
     text: str = ""
     callback_id: str | None = None
@@ -185,15 +186,21 @@ def _keyboard(version_id: str) -> dict:
 def _video_keyboard(version_id: str) -> dict:
     """The second gate: the rendered video, before anyone else sees it.
 
-    Deliberately two buttons and no "regenerate". At this point the money is
-    already spent, so the only questions left are whether it goes out and
-    whether it is kept.
+    Three buttons and still no "regenerate", because regenerating is what this
+    gate exists to avoid: the money is already spent, and a video that is
+    nearly right is the common case. "Defectuoso" asks what is wrong and buys
+    only that — a take, or one scene's shot — instead of the whole video again.
     """
     return {
-        "inline_keyboard": [[
-            {"text": "🚀 Publicar", "callback_data": f"publicar:{version_id}"},
-            {"text": "🗑 No publicar", "callback_data": f"descartar:{version_id}"},
-        ]]
+        "inline_keyboard": [
+            [
+                {"text": "🚀 Publicar", "callback_data": f"publicar:{version_id}"},
+                {"text": "🗑 No publicar", "callback_data": f"descartar:{version_id}"},
+            ],
+            [
+                {"text": "🔧 Defectuoso", "callback_data": f"defectuoso:{version_id}"},
+            ],
+        ]
     }
 
 
@@ -339,7 +346,7 @@ def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | 
             return None
         kind, version_id = data.split(":", 1)
         if kind not in ("aprobar", "cambios", "rechazar", "regenerar",
-                        "publicar", "descartar"):
+                        "publicar", "descartar", "defectuoso"):
             return None
         return Action(kind=kind, version_id=version_id,
                       callback_id=callback.get("id"))

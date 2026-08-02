@@ -81,6 +81,31 @@ HASHTAGS = "#pymes #automatizacion #IA"
 CATEGORY = "28"
 
 
+#: YouTube decides what a Short is from the file, not from a flag: vertical (or
+#: square) and no longer than three minutes. Nothing has to be declared, which
+#: is why this is a check rather than a parameter — the only way to fail it is
+#: to stop producing the format, and that should be noticed out loud.
+SHORTS_MAX_S = 180
+
+
+def is_short(duration_s: float | None, width: int = 1080,
+             height: int = 1920) -> bool:
+    """Whether YouTube will file this as a Short rather than a normal video."""
+    if not duration_s or duration_s > SHORTS_MAX_S:
+        return False
+    return height >= width
+
+
+def preview(platform: str, *, title: str, caption: str) -> dict:
+    """Exactly what would be sent for this network, to show a human first.
+
+    Built by the same function that builds the real request, so what the
+    operator approves and what leaves the machine cannot drift apart.
+    """
+    return _payload(platform, user=autenia.upload_post_user or "(sin perfil)",
+                    title=title, body=caption)
+
+
 def youtube_description(caption: str) -> str:
     """The description as it should read under the video.
 

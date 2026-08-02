@@ -343,6 +343,52 @@ async def _on_request(action: telegram.Action) -> None:
 # Render and publish
 # --------------------------------------------------------------------------
 
+def _publish_preview(script: dict, caption: str, result) -> str:
+    """What the second gate shows: the video, and exactly what would be posted.
+
+    The title and the description come from the same function that builds the
+    real request, so approving here cannot approve something different from
+    what leaves the machine. Nobody should have to trust a summary of a post
+    they are about to make.
+    """
+    title = script.get("titulo") or script.get("hook") or "Autenia"
+    lines = [f"🎬 <b>Listo.</b> {result.duration_s:.0f}s · "
+             f"{result.coverage:.0%} material propio"]
+
+    visibilidad = {"public": "público", "unlisted": "no listado",
+                   "private": "privado"}
+
+    for platform in publish.configured():
+        campos = publish.preview(platform, title=title, caption=caption)
+        if platform == "youtube":
+            formato = ("Short" if publish.is_short(result.duration_s,
+                                                   render.WIDTH, render.HEIGHT)
+                       else "vídeo normal (no cumple para Short)")
+            estado = campos["privacyStatus"]
+            # Telegram caps a video caption at 1024 characters and cuts what
+            # goes over. A description trimmed here ends where it decides to,
+            # rather than mid-word at whatever the limit happens to land on.
+            descripcion = campos["youtube_description"]
+            if len(descripcion) > 600:
+                descripcion = descripcion[:600].rsplit(" ", 1)[0] + "…"
+            lines += [
+                "",
+                f"📺 <b>YouTube</b> · {formato} · "
+                f"{visibilidad.get(estado, estado)}",
+                f"<b>{telegram.escape(campos['youtube_title'])}</b>",
+                f"<i>{telegram.escape(descripcion)}</i>",
+            ]
+        else:
+            lines += ["", f"📱 <b>{platform}</b> · "
+                          f"{telegram.escape(campos['title'])}"]
+
+    lines.append("")
+    lines.append("🧪 <b>Simulación:</b> «Publicar» no enviará nada."
+                 if autenia.publish_dry_run
+                 else "<b>Publicar</b> lo sube tal cual. Eso no se deshace.")
+    return "\n".join(lines)
+
+
 async def _render_and_publish(version_id: str, script: dict) -> None:
     """Render, then hand the video back. Publishing is a separate decision."""
     workdir = os.path.join(WORK_ROOT, version_id)
@@ -364,19 +410,14 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
         fresh = await sess.get(Version, version_id)
         fresh.video_path = result.path
         fresh.duration_s = result.duration_s
+        caption = fresh.caption or ""
         # Out of `renderizando` as soon as the spending is over: that state
         # allows one version per content and blocks the next cycle while it is
         # occupied, and waiting for a human is not rendering.
         await store.transition(sess, fresh, State.REVISION_VIDEO)
 
-    destino = ", ".join(publish.configured()) or "ninguna red"
-    aviso = ("🧪 <b>Simulación:</b> «Publicar» no enviará nada."
-             if autenia.publish_dry_run
-             else f"<b>Publicar</b> lo sube a {destino}. Eso no se deshace.")
     await telegram.send_video(
-        result.path,
-        f"🎬 <b>Listo.</b> {result.duration_s:.0f}s · "
-        f"{result.coverage:.0%} material propio\n{aviso}",
+        result.path, _publish_preview(script, caption, result),
         # Told, not guessed: Telegram does not read them off the file, and a
         # vertical master with no dimensions arrives looking squashed.
         width=render.WIDTH, height=render.HEIGHT, duration=result.duration_s,

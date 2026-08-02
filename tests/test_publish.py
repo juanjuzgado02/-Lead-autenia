@@ -341,3 +341,26 @@ def test_the_description_keeps_its_line_breaks():
 def test_a_title_still_loses_its_line_breaks():
     """A newline in a title is a rejected upload."""
     assert "\n" not in publish._clip("dos\nlíneas", 100)
+
+
+# -- Short, y lo que se enseña antes de publicar ---------------------------
+
+@pytest.mark.parametrize("duracion,alto,esperado", [
+    (26.0, 1920, True),      # lo que produce este sistema
+    (55.0, 1920, True),      # el máximo que permite el preflight
+    (181.0, 1920, False),    # pasa de tres minutos
+    (26.0, 608, False),      # apaisado: YouTube no lo trata como Short
+    (None, 1920, False),
+])
+def test_what_youtube_will_file_as_a_short(duracion, alto, esperado):
+    """No se declara en ningún campo: se decide mirando el fichero."""
+    assert publish.is_short(duracion, 1080, alto) is esperado
+
+
+def test_the_preview_is_built_by_the_code_that_sends(monkeypatch):
+    """Aprobar un resumen de lo que se va a publicar no vale de nada."""
+    monkeypatch.setenv("UPLOAD_POST_USER", "autenia")
+    visto = publish.preview("youtube", title="Un título", caption="Un cuerpo")
+    enviado = publish._payload("youtube", user="autenia", title="Un título",
+                               body="Un cuerpo")
+    assert visto == enviado

@@ -96,7 +96,7 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 | `autenia/editorial.py` | Hard filters and scoring. |
 | `autenia/sources.py` | Grounded search, canonical URLs, publisher attribution. |
 | `autenia/gemini.py` | Model calls: judgement, script, TTS. |
-| `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default (voice `Iapetus`, chosen by ear), ElevenLabs opt-in. |
+| `autenia/voice.py` | Provider-agnostic narration — Gemini TTS by default (voice `Iapetus`, chosen by ear), ElevenLabs opt-in. Also listens to the take it bought and asks for another if it stutters. |
 | `autenia/render.py` | Script → 9:16 master, ffmpeg only. |
 | `autenia/formats.py` | How it is cut — cadence, captions, camera. Data, not code. |
 | `autenia/clips.py` | Generated footage, 8 s a piece, cached and reused by meaning. |
@@ -132,6 +132,17 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 - **A hook card takes its seconds from the hook, never adds them.** The voice is
   cut into segments before the picture is planned, so a shot that appears from
   nowhere slides every later caption out of sync with what is being said.
+- **A synthesiser fails by returning a valid file.** Not an error, not a short
+  WAV: a perfectly good take in which a word is said twice or half a sentence is
+  missing. On 2026-08-02 a script reading "No se trata de despedir a nadie" was
+  narrated as "no se trata de despedir a nadie, er a nadie", and nothing caught
+  it — the text sent was right and the cut at real pauses was exact to the
+  millisecond. So `voice.narracion()` transcribes the take, diffs it against
+  what was sent, and buys another when it does not match. Extra words and two or
+  more consecutive missing ones are defects; substitutions are not, they are how
+  a transcriber fails, and enough of them mean the take is believed rather than
+  the transcript. The gate absolves on doubt, like the visual reviewer: no key,
+  no network or a nonsense transcript lets the take through.
 - **Never let an image model write text.** Every prompt in `images.py` forbids
   letters, numbers and logos: generated lettering is gibberish and a viewer spots
   it instantly. The real words are drawn afterwards by Pillow.
@@ -184,6 +195,9 @@ key the browser holds.
 - `AUTENIA_VOICE_PROVIDER`, `AUTENIA_VOICE_NAME` (`Iapetus`), `AUTENIA_TZ`
   (`Europe/Madrid`), `AUTENIA_DB_PATH`, `AUTENIA_WORK_DIR`,
   `AUTENIA_LIBRARY_DIR`, `AUTENIA_IMAGE_CACHE`, `AUTENIA_CLIP_CACHE`
+- `AUTENIA_REVISION_VOZ` (on), `AUTENIA_INTENTOS_VOZ` (3) — whether the take is
+  listened to before it is cut, and how many are bought before the least bad one
+  is kept. Off is for a montage test, where the words do not matter
 - `FFMPEG_ENCODER` (`x264` | `nvenc` | `auto`), `AUDIO_NORMALIZE` (on) — the
   encoder and the −14 LUFS normalisation in `autenia/ffmpeg.py`
 - `AUTENIA_VIDEO_CLIPS` — generated footage. **Off in the code, on in

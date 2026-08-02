@@ -11,9 +11,14 @@ the same thing (a mono WAV at ``out_path``) and are selected by
 
 from __future__ import annotations
 
+import base64
+import difflib
+import os
 import re
+import shutil
+import unicodedata
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 
@@ -314,3 +319,203 @@ async def catalogue(provider: str | None = None) -> list[tuple[str, str]]:
 def _duration_s(path: str) -> float:
     with wave.open(path, "rb") as handle:
         return handle.getnframes() / float(handle.getframerate())
+
+
+# --------------------------------------------------------------------------
+# Que lo dicho sea lo escrito
+# --------------------------------------------------------------------------
+#
+# Un sintetizador no falla como falla una API: no devuelve un error, devuelve un
+# WAV perfectamente válido en el que se ha comido una palabra o la ha dicho dos
+# veces. El 2 de agosto de 2026 salió a revisión un vídeo cuyo guion decía "No se
+# trata de despedir a nadie" y cuya locución decía "no se trata de despedir a
+# nadie, er a nadie". El texto que se mandó era correcto y el corte en pausas
+# reales era exacto — los cinco trozos sumaban al milisegundo lo que duraba la
+# toma. El tropiezo venía dentro del audio, y hasta ese momento lo único que
+# podía detectarlo era una persona escuchando el vídeo terminado.
+#
+# Es el mismo trabajo que hace ``revision.py`` con las imágenes, un piso más
+# abajo: mirar lo que ha generado el modelo antes de que salga en un vídeo. Y
+# con la misma regla, porque la alternativa es peor que el defecto — **la duda
+# absuelve**: sin clave, sin red o con una transcripción rara, la toma pasa.
+
+#: Cuántas veces se pide la misma locución antes de quedarse con la menos mala.
+#: Tres y no dos porque el tropiezo es aleatorio: si una toma sale mal, la
+#: siguiente sale bien casi siempre, y la tercera existe para el día en que no.
+#: Cada reintento cuesta una locución entera —céntimos— y unos segundos.
+INTENTOS_LOCUCION = 3
+
+#: A partir de qué proporción de palabras **sustituidas** se deja de creer a la
+#: transcripción. Un transcriptor que no ha entendido el audio devuelve otras
+#: palabras en el mismo sitio, y actuar sobre eso sería pagar locuciones nuevas
+#: para arreglar un fallo que no está ahí.
+#:
+#: Cuenta sustituciones y no diferencias en general porque las otras dos formas
+#: de diferir son justo lo que se busca: sobran palabras (tartamudeo) o faltan
+#: seguidas (frase comida, o una toma que se corta a la mitad — que sí pasa y
+#: es peor que un tropiezo). Medirlas todas juntas hacía que una locución
+#: truncada, la más grave, fuese la que más se parecía a un oído roto.
+DIVERGENCIA_MAXIMA = 0.4
+
+_TRANSCRIPCION = (
+    "Transcribe este audio en español palabra por palabra, exactamente como "
+    "suena. Incluye las palabras repetidas, los tartamudeos y las sílabas "
+    "sueltas si las hay: se está buscando precisamente eso. No corrijas, no "
+    "resumas y no ordenes la frase. Devuelve sólo la transcripción."
+)
+
+
+def revision_voz_enabled() -> bool:
+    """Si se escucha lo que se ha sintetizado. Se puede apagar como el visual."""
+    return (os.environ.get("AUTENIA_REVISION_VOZ", "on").strip().lower()
+            not in ("0", "false", "no", "off"))
+
+
+def intentos_locucion() -> int:
+    """Cuántas tomas se piden como mucho. Un valor ilegible no rompe el ciclo."""
+    try:
+        return max(1, int(os.environ.get("AUTENIA_INTENTOS_VOZ",
+                                         INTENTOS_LOCUCION)))
+    except ValueError:
+        return INTENTOS_LOCUCION
+
+
+def _palabras(texto: str) -> list[str]:
+    """El texto reducido a lo que se puede comparar entre lo dicho y lo oído.
+
+    Pasa por :func:`speakable` a propósito, y en los dos lados: al sintetizador
+    se le manda "30 por ciento" y el transcriptor escribe "30%", así que sin
+    esto la comparación denunciaría tres palabras comidas en cada cifra del
+    guion — que es justo lo que este canal escribe en todas.
+    """
+    texto = speakable(texto).lower()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    return re.findall(r"[a-z0-9]+", texto)
+
+
+def tropiezos(dicho: str, oido: str) -> list[str]:
+    """Qué le pasó a la voz entre el guion y el audio, en palabras.
+
+    Devuelve una lista vacía cuando la toma sirve. Dos cosas la condenan:
+
+    * **Palabras de más** — el tartamudeo. Un transcriptor casi nunca inventa
+      palabras que no ha oído, así que una inserción es una señal limpia.
+    * **Dos o más palabras seguidas de menos** — la frase comida. El mínimo de
+      dos es lo que separa un defecto real de un transcriptor que se salta un
+      "de": una sola palabra perdida se descarta por barata que salga.
+
+    Una sustitución no cuenta como defecto: ahí el transcriptor ha oído algo y
+    lo ha escrito distinto, que es su error típico y no el de la voz. Lo que
+    hace es lo contrario — si abundan, la que no es de fiar es la
+    transcripción, y la toma pasa (:data:`DIVERGENCIA_MAXIMA`).
+    """
+    dichas, oidas = _palabras(dicho), _palabras(oido)
+    if not dichas or not oidas:
+        return []
+
+    fallos: list[str] = []
+    sustituidas = 0
+    for etiqueta, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            None, dichas, oidas, autojunk=False).get_opcodes():
+        if etiqueta == "equal":
+            continue
+        if etiqueta == "replace":
+            sustituidas += max(i2 - i1, j2 - j1)
+        if etiqueta == "insert":
+            despues = " ".join(dichas[max(0, i1 - 3):i1])
+            fallos.append(f'dice de más "{" ".join(oidas[j1:j2])}" '
+                          f'después de "{despues}"')
+        elif etiqueta == "delete" and i2 - i1 >= 2:
+            fallos.append(f'se salta "{" ".join(dichas[i1:i2])}"')
+
+    if sustituidas > len(dichas) * DIVERGENCIA_MAXIMA:
+        return []  # la que ha fallado es la transcripción, no la voz
+    return fallos
+
+
+async def transcribir(path: str) -> str | None:
+    """Lo que se oye en un WAV, según Gemini. ``None`` si no se pudo escuchar.
+
+    Gemini y no el proveedor que hable: la clave ya está puesta —es la del
+    guion y la de la búsqueda—, es la barata, y así la comprobación funciona
+    igual cuando quien locuta es ElevenLabs.
+    """
+    try:
+        with open(path, "rb") as handle:
+            audio = base64.b64encode(handle.read()).decode()
+    except OSError:
+        return None
+
+    try:
+        payload = await gemini.request(
+            f"models/{gemini.TEXT_MODEL}:generateContent",
+            {
+                "contents": [{"parts": [
+                    {"text": _TRANSCRIPCION},
+                    {"inlineData": {"mimeType": "audio/wav", "data": audio}},
+                ]}],
+                "generationConfig": {"temperature": 0.0},
+            },
+            timeout=180.0,
+        )
+        oido = "".join(
+            parte.get("text", "")
+            for parte in payload["candidates"][0]["content"]["parts"])
+    except (gemini.GeminiError, KeyError, IndexError, TypeError, ValueError) as exc:
+        print(f"[voz] no se pudo escuchar la toma: {str(exc)[:120]}")
+        return None
+    return oido.strip() or None
+
+
+async def revisar_toma(path: str, texto: str) -> list[str]:
+    """Los tropiezos de una toma ya sintetizada. Nunca lanza."""
+    if not revision_voz_enabled():
+        return []
+    oido = await transcribir(path)
+    if not oido:
+        return []
+    return tropiezos(texto, oido)
+
+
+async def narracion(text: str, *, out_path: str,
+                    provider: str | None = None,
+                    name: str | None = None,
+                    intentos: int | None = None) -> Spoken:
+    """La locución del vídeo: sintetizada, escuchada y repetida si tropieza.
+
+    Lo que :func:`synthesize` para todo lo demás, más la comprobación. Están
+    separadas porque una audición no la necesita — ocho voces leyendo la misma
+    frase para elegir una se juzgan de oído, que es de lo que va —, y porque
+    quien lee esto tiene que poder sintetizar sin pagar tres veces.
+
+    Si ninguna toma sale limpia se queda la que menos tropieza, y se dice. Un
+    vídeo con una palabra repetida sigue siendo un vídeo que una persona va a
+    ver antes de que se publique; no tenerlo es perder el día.
+    """
+    total = intentos if intentos is not None else intentos_locucion()
+    respaldo = f"{out_path}.mejor"
+    mejor: Spoken | None = None
+    mejores: list[str] = []
+
+    try:
+        for numero in range(1, max(1, total) + 1):
+            hablada = await synthesize(text, out_path=out_path,
+                                       provider=provider, name=name)
+            fallos = await revisar_toma(hablada.path, text)
+            if not fallos:
+                return hablada
+            if mejor is None or len(fallos) < len(mejores):
+                # La mejor hasta ahora se guarda aparte: el siguiente intento
+                # escribe encima de out_path y no hay forma de recuperarla.
+                shutil.copyfile(hablada.path, respaldo)
+                mejor, mejores = hablada, fallos
+            print(f"[voz] toma {numero} descartada: {'; '.join(fallos)}")
+
+        shutil.copyfile(respaldo, out_path)
+        print(f"[voz] ninguna toma salió limpia; se usa la menos mala "
+              f"({'; '.join(mejores)})")
+        return replace(mejor, path=out_path)
+    finally:
+        if os.path.exists(respaldo):
+            os.remove(respaldo)

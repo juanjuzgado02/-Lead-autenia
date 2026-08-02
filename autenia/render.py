@@ -701,10 +701,14 @@ async def narrate(segments: list[Segment], workdir: str,
 
     ``voice_name`` is which voice reads this particular script — stories get a
     different one from news. ``None`` leaves whatever is configured.
+
+    The take is listened to before it is cut: a synthesiser that stutters
+    returns a perfectly valid WAV, and the cut that follows is exact, so the
+    defect survives every check there was until somebody watched the video.
     """
     full_text = " ".join(segment.text.strip() for segment in segments)
     take = os.path.join(workdir, "voz.wav")
-    spoken = await voice.synthesize(full_text, out_path=take, name=voice_name)
+    spoken = await voice.narracion(full_text, out_path=take, name=voice_name)
 
     if len(segments) == 1:
         segments[0].audio_path = spoken.path

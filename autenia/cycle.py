@@ -214,7 +214,51 @@ async def _regenerate(action: telegram.Action) -> None:
 
 
 async def _feedback(action: telegram.Action) -> None:
+    """Un texto suelto. Qué significa depende de qué esté esperando.
+
+    Sobre un guion es una corrección de las palabras. Sobre un vídeo ya
+    renderizado es un defecto de lo que salió —"la mano tiene seis dedos"— y eso
+    no se arregla reescribiendo: se arregla volviendo a montar el mismo guion,
+    ahora que el material defectuoso ya no está en el caché.
+    """
+    async with store.session() as sess:
+        version = await sess.get(Version, action.version_id)
+        estado = State(version.state) if version else None
+
+    if estado is State.REVISION_VIDEO:
+        await _video_defect(action)
+        return
     await _rewrite(action.version_id, feedback=action.text)
+
+
+async def _video_defect(action: telegram.Action) -> None:
+    """El vídeo tenía un fallo: se tira y el mismo guion vuelve a la cola.
+
+    No se reescribe el guion, que no tenía la culpa, y no se republica el vídeo,
+    que no se puede arreglar. Lo que se hace es proponer otra vez las mismas
+    palabras: aprobar de nuevo vuelve a montar, y el metraje que causó el fallo
+    ya lo habrá quitado el revisor —o lo quitas tú— así que la segunda pasada
+    coge otro plano.
+    """
+    defecto = (action.text or "").strip()
+
+    async with store.session() as sess:
+        previa = await sess.get(Version, action.version_id)
+        nueva = await store.next_version(
+            sess, previa, note=f"vídeo rechazado: {defecto[:200]}")
+        await store.transition(sess, nueva, State.EN_REVISION)
+        script = json.loads(nueva.script) if nueva.script else {}
+        nueva_id, numero = nueva.id, nueva.number
+
+    await telegram.send_message(
+        f"🔁 Anotado: «{telegram.escape(defecto[:120])}».\n"
+        f"<i>El guion no tenía la culpa, así que te lo propongo igual. "
+        f"Aprobar vuelve a montarlo, y el material defectuoso ya no está.</i>")
+    await telegram.send_review(
+        script, nueva_id, version_number=numero,
+        estimated_seconds=preflight.estimate_seconds(
+            gemini.narration_text(script)),
+        coverage=_expected_coverage(script))
 
 
 async def _rewrite(version_id: str, *, feedback: str | None) -> None:
@@ -508,11 +552,15 @@ async def awaiting_ids() -> list[str]:
     """Versions in review, oldest first.
 
     A list rather than a set because the order carries meaning: a plain text
-    message is feedback on the most recent script, and with `/guion` there can
-    now be several waiting at once.
+    message is feedback on the most recent thing sent, and with `/guion` there
+    can be several waiting at once.
+
+    Incluye los vídeos esperando permiso, no sólo los guiones: a un vídeo
+    también se le contesta por escrito, y ese texto es un defecto que hay que
+    poder contar.
     """
     async with store.session() as sess:
-        return [v.id for v in await store.awaiting_review(sess)]
+        return [v.id for v in await store.waiting_for_operator(sess)]
 
 
 async def listen() -> None:

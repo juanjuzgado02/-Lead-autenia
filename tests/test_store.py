@@ -274,3 +274,24 @@ async def test_scheduler_sees_an_active_cycle_until_it_is_resolved(db):
 
         await store.transition(sess, version, State.DESCARTADO)
         assert not await store.has_active_cycle(sess)
+
+
+@pytest.mark.asyncio
+async def test_the_queue_holds_scripts_and_videos(db):
+    """A un vídeo también se le contesta por escrito, y ese texto es un defecto."""
+    async with store.session() as sess:
+        guion = await _new_content(sess, topic="ha")
+        v1 = await _version(sess, guion)
+        await store.transition(sess, v1, State.GUION)
+        await store.transition(sess, v1, State.EN_REVISION)
+
+        video = await _new_content(sess, topic="hb")
+        v2 = await _version(sess, video)
+        for destino in (State.GUION, State.EN_REVISION, State.APROBADO,
+                        State.RENDERIZANDO, State.REVISION_VIDEO):
+            await store.transition(sess, v2, destino)
+
+        esperando = await store.waiting_for_operator(sess)
+        assert {v.id for v in esperando} == {v1.id, v2.id}
+        # Sólo los guiones cuentan como "pendientes de revisar el texto".
+        assert [v.id for v in await store.awaiting_review(sess)] == [v1.id]

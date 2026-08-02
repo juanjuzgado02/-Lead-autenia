@@ -305,6 +305,21 @@ async def get_version(sess: AsyncSession, version_id: str) -> Version | None:
     return await sess.get(Version, version_id)
 
 
+async def waiting_for_operator(sess: AsyncSession) -> list[Version]:
+    """Todo lo que espera una decisión: guiones y vídeos, lo más viejo primero.
+
+    Los dos cuentan porque a los dos se les puede contestar por escrito, y qué
+    significa ese texto depende de dónde esté la versión: sobre un guion es una
+    corrección, sobre un vídeo es un defecto de lo que salió.
+    """
+    result = await sess.scalars(
+        select(Version)
+        .where(Version.state.in_([State.EN_REVISION, State.REVISION_VIDEO]))
+        .order_by(Version.updated_at)
+    )
+    return list(result)
+
+
 async def awaiting_review(sess: AsyncSession) -> list[Version]:
     """Versions sitting in Telegram waiting for a human.
 

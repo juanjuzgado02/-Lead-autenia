@@ -64,7 +64,9 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
    problem at once; a failed version is kept in `descartado` as the record.
 5. **Review** (`autenia/telegram.py`) — script, sources and cost to one chat,
    with `Aprobar`, `Pedir cambios`, `Rechazar`, `Regenerar`. Nothing renders
-   before a human approves the words.
+   before a human approves the words. `/guion <tema>` writes one on a subject
+   the operator chooses instead of waiting for the news; with no sources behind
+   it, that script may not state a figure at all.
 6. **Render** (`autenia/render.py`) — `prepare()` buys everything (footage,
    photographs, one continuous narration cut at the real pauses), `compose()`
    assembles it. Backgrounds in strict order: Autenia's own footage
@@ -72,8 +74,14 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
    photograph (`autenia/images.py`), then typography. Stills get a slow push so
    they do not read as a slideshow. Captions are drawn with Pillow and
    overlaid. 1080×1920 H.264/AAC 30 fps, normalised to −14 LUFS.
-7. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
-   single refusal cannot hide two successes. Dry run by default.
+7. **Second gate** (`revision_video`) — the finished video goes back to the
+   chat with `Publicar` / `No publicar`. Rendering never publishes on its own:
+   approving a script is not the same as having seen what came out of it, and
+   the platform is the one place with no undo.
+8. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
+   single refusal cannot hide two successes. `AUTENIA_REDES` picks which
+   networks (Autenia posts to YouTube only; the rest are uploaded by hand from
+   the video Telegram delivers). Dry run by default.
 
 ### Key files
 
@@ -135,9 +143,11 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
   strings together empty days, review the angles before touching the threshold.
   Lowering the bar is exactly what the brief forbids: a day without a video is a
   valid outcome, filling the calendar is not.
-- **`renderizando` is the only state that spends money**, and it is not terminal.
-  A version parked there blocks the next cycle for ever, so every path out of it
-  must reach `publicado` or `fallido` — including dry runs.
+- **`renderizando` is the only state that spends money**, and neither it nor
+  `revision_video` is terminal. A version parked in either blocks the next cycle
+  for ever, so every path out of them must reach `publicado`, `descartado` or
+  `fallido` — including dry runs and including a publish that failed before it
+  could be attempted.
 - **The cost ledger is written but not wired, and reading the code the other way
   round is the easy mistake.** `store.record_cost`, `settle_cost`,
   `month_spend_cents` and `assert_within_video_budget` all exist and are tested,

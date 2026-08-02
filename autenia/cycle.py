@@ -133,6 +133,8 @@ async def handle(action: telegram.Action) -> None:
         "regenerar": _regenerate,
         "texto": _feedback,
         "tema": _on_request,
+        "publicar": _publish_video,
+        "descartar": _discard_video,
     }
     handler = handlers.get(action.kind)
     if handler is None:
@@ -162,7 +164,8 @@ async def _approve(action: telegram.Action) -> None:
                                        "Ese guion ya estaba resuelto")
         return
 
-    await telegram.answer_callback(action.callback_id, "Aprobado — renderizando")
+    await telegram.answer_callback(
+        action.callback_id, "Aprobado — renderizando. Te lo paso antes de subirlo")
     async with store.session() as sess:
         fresh = await sess.get(Version, version.id)
         try:
@@ -341,6 +344,7 @@ async def _on_request(action: telegram.Action) -> None:
 # --------------------------------------------------------------------------
 
 async def _render_and_publish(version_id: str, script: dict) -> None:
+    """Render, then hand the video back. Publishing is a separate decision."""
     workdir = os.path.join(WORK_ROOT, version_id)
     out_path = os.path.join(workdir, "short.mp4")
 
@@ -360,31 +364,57 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
         fresh = await sess.get(Version, version_id)
         fresh.video_path = result.path
         fresh.duration_s = result.duration_s
-        caption = fresh.caption or ""
+        # Out of `renderizando` as soon as the spending is over: that state
+        # allows one version per content and blocks the next cycle while it is
+        # occupied, and waiting for a human is not rendering.
+        await store.transition(sess, fresh, State.REVISION_VIDEO)
 
-    title = script.get("titulo") or script.get("hook") or "Autenia"
+    destino = ", ".join(publish.configured()) or "ninguna red"
+    aviso = ("🧪 <b>Simulación:</b> «Publicar» no enviará nada."
+             if autenia.publish_dry_run
+             else f"<b>Publicar</b> lo sube a {destino}. Eso no se deshace.")
     await telegram.send_video(
         result.path,
-        f"{'🧪 Simulando publicación' if autenia.publish_dry_run else '📤 Publicando'}…\n"
-        f"{result.duration_s:.0f}s · {result.coverage:.0%} material propio",
+        f"🎬 <b>Listo.</b> {result.duration_s:.0f}s · "
+        f"{result.coverage:.0%} material propio\n{aviso}",
         # Told, not guessed: Telegram does not read them off the file, and a
         # vertical master with no dimensions arrives looking squashed.
-        width=render.WIDTH, height=render.HEIGHT, duration=result.duration_s)
+        width=render.WIDTH, height=render.HEIGHT, duration=result.duration_s,
+        version_id=version_id)
+
+
+async def _publish_video(action: telegram.Action) -> None:
+    """The second gate: the operator has watched it and lets it out."""
+    version = await _load(action.version_id, expect=State.REVISION_VIDEO)
+    if version is None:
+        await telegram.answer_callback(action.callback_id,
+                                       "Ese vídeo ya estaba resuelto")
+        return
+
+    await telegram.answer_callback(
+        action.callback_id,
+        "Simulando…" if autenia.publish_dry_run else "Publicando…")
+
+    async with store.session() as sess:
+        fresh = await sess.get(Version, version.id)
+        script = json.loads(fresh.script) if fresh.script else {}
+        version_id, path, caption = fresh.id, fresh.video_path, fresh.caption or ""
+
+    title = script.get("titulo") or script.get("hook") or "Autenia"
 
     try:
         outcomes = await publish.publish(
-            result.path, version_id=version_id, title=title, caption=caption)
+            path, version_id=version_id, title=title, caption=caption)
     except publish.PublishError as exc:
-        # `renderizando` is not terminal: a version left here blocks every
-        # future cycle for ever. Publishing failing before it could even be
-        # attempted is still an end to this version, so it says so.
+        # `revision_video` is not terminal either: a version left there blocks
+        # every future cycle. Failing before the attempt is still an end.
         async with store.session() as sess:
             fresh = await sess.get(Version, version_id)
             await store.transition(sess, fresh, State.FALLIDO, note=str(exc))
         await telegram.send_message(
             f"❌ No se ha podido publicar: {exc}\n"
-            f"<i>El vídeo está renderizado y lo tienes arriba; puedes subirlo "
-            f"a mano.</i>")
+            f"<i>El vídeo está hecho y lo tienes arriba; puedes subirlo a "
+            f"mano.</i>")
         return
 
     lines = [outcome.summary for outcome in outcomes]
@@ -394,9 +424,6 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
                      "<code>UPLOAD_POST_API_KEY</code> y <code>UPLOAD_POST_USER</code>.")
     await telegram.send_message("\n".join(lines))
 
-    # `renderizando` is not terminal, and a version parked there would block
-    # tomorrow's cycle for ever. So a dry run still closes the version — with a
-    # note that says plainly that nothing left the building.
     async with store.session() as sess:
         fresh = await sess.get(Version, version_id)
         if all(outcome.ok for outcome in outcomes):
@@ -406,6 +433,30 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
             failed = ", ".join(o.platform for o in outcomes if not o.ok)
             await store.transition(sess, fresh, State.FALLIDO,
                                    note=f"publicación fallida en {failed}")
+
+
+async def _discard_video(action: telegram.Action) -> None:
+    """The operator watched it and it does not go out.
+
+    Terminal, and the file stays on disk: it was paid for, and the next
+    argument about what the format should look like is better had over a video
+    that exists than over a memory of one.
+    """
+    version = await _load(action.version_id, expect=State.REVISION_VIDEO)
+    if version is None:
+        await telegram.answer_callback(action.callback_id,
+                                       "Ese vídeo ya estaba resuelto")
+        return
+
+    async with store.session() as sess:
+        fresh = await sess.get(Version, version.id)
+        path = fresh.video_path
+        await store.transition(sess, fresh, State.DESCARTADO,
+                               note="el operador no lo publicó")
+    await telegram.answer_callback(action.callback_id, "No se publica")
+    await telegram.send_message(
+        f"🗑 No se publica. El vídeo se queda en <code>{path}</code> por si "
+        f"quieres usarlo o compararlo.")
 
 
 # --------------------------------------------------------------------------

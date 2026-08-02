@@ -224,3 +224,22 @@ def test_feedback_lands_on_the_newest_script_in_review():
     """`awaiting` arrives oldest first, so the last one is the live one."""
     action = parse_update(message("acorta el hook"), awaiting=["viejo", "nuevo"])
     assert action.version_id == "nuevo"
+
+
+# -- the second gate -------------------------------------------------------
+
+@pytest.mark.parametrize("kind", ["publicar", "descartar"])
+def test_the_video_buttons_are_bound_to_their_version(kind):
+    action = parse_update(callback(f"{kind}:v-video"))
+    assert action == Action(kind=kind, version_id="v-video", callback_id="cb1")
+
+
+def test_the_video_keyboard_offers_only_the_two_real_choices():
+    """The money is already spent: regenerating is not one of the options."""
+    keyboard = telegram._video_keyboard("v-abc")
+    data = [b["callback_data"] for row in keyboard["inline_keyboard"] for b in row]
+    assert data == ["publicar:v-abc", "descartar:v-abc"]
+
+
+def test_a_video_button_from_any_other_chat_is_ignored():
+    assert parse_update(callback("publicar:v1", chat_id=STRANGER)) is None

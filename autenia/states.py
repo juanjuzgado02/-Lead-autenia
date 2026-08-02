@@ -4,14 +4,16 @@ A **content** is an editorial idea. It has N **versions**; the state lives on th
 version and the content points at the current one. Feedback never mutates a
 version — it creates the next one.
 
-    candidato ──> guion ──> en_revision ──> aprobado ──> renderizando ──> publicado
-                                 │                            │
-                                 └──> descartado              └──> fallido
+    candidato ─> guion ─> en_revision ─> aprobado ─> renderizando ─> revision_video ─> publicado
+                               │                          │                │
+                               └──> descartado            └──> fallido     └──> descartado
 
-**Review happens on the script, before the render.** A topic the operator
-rejects costs nothing, and edits arrive as text rather than as complaints about
-a finished video. Approving is therefore approving the words: rendering and
-publishing then run unattended.
+**There are two gates, and they ask different questions.** The first is on the
+script, before a cent is spent: a topic the operator rejects costs nothing, and
+edits arrive as text rather than as complaints about a finished video. The
+second is on the video that came out of it, before it reaches an audience —
+because a script can be approved and still render into something nobody wants
+published, and the platform is the one place where "undo" does not exist.
 
 Two rules earn their keep here:
 
@@ -37,6 +39,7 @@ class State(str, Enum):
     RENDERIZANDO = "renderizando"    # the only state that spends
     EN_REVISION = "en_revision"      # waiting for Telegram
     APROBADO = "aprobado"            # frozen, publishable
+    REVISION_VIDEO = "revision_video"  # rendered, waiting to be let out
     PUBLICADO = "publicado"          # terminal
     FALLIDO = "fallido"              # terminal; keeps whatever it burned
     DESCARTADO = "descartado"        # terminal; rejected or superseded
@@ -50,7 +53,12 @@ TRANSITIONS: dict[State, frozenset[State]] = {
     # next one at `guion`, and this one ends at `descartado`.
     State.EN_REVISION: frozenset({State.APROBADO, State.DESCARTADO}),
     State.APROBADO: frozenset({State.RENDERIZANDO, State.DESCARTADO}),
-    State.RENDERIZANDO: frozenset({State.PUBLICADO, State.FALLIDO}),
+    # Rendering never publishes on its own any more: what it produces goes back
+    # to the operator, because approving a script is not the same as having
+    # seen the video that came out of it.
+    State.RENDERIZANDO: frozenset({State.REVISION_VIDEO, State.FALLIDO}),
+    State.REVISION_VIDEO: frozenset({State.PUBLICADO, State.DESCARTADO,
+                                     State.FALLIDO}),
     State.PUBLICADO: frozenset(),
     State.FALLIDO: frozenset(),
     State.DESCARTADO: frozenset(),
@@ -61,7 +69,12 @@ TERMINAL = frozenset({State.PUBLICADO, State.FALLIDO, State.DESCARTADO})
 
 #: States where the script is settled. The words cannot change from here on;
 #: a rewrite has to become a new version and be approved again.
-FROZEN = frozenset({State.APROBADO, State.RENDERIZANDO, State.PUBLICADO})
+FROZEN = frozenset({State.APROBADO, State.RENDERIZANDO, State.REVISION_VIDEO,
+                    State.PUBLICADO})
+
+#: States that are waiting on the operator. Nothing here costs anything to sit
+#: in, but the daily cycle must not stack a second video on top of one.
+WAITING = frozenset({State.EN_REVISION, State.REVISION_VIDEO})
 
 #: The single state that can incur provider cost.
 SPENDING = State.RENDERIZANDO

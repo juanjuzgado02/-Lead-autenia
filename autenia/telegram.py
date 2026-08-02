@@ -45,7 +45,7 @@ class Action:
     """What the operator did, once it has been checked and attributed."""
 
     kind: str          # "aprobar" | "cambios" | "rechazar" | "regenerar" |
-                       # "texto" | "tema"
+                       # "texto" | "tema" | "publicar" | "descartar"
     version_id: str | None
     text: str = ""
     callback_id: str | None = None
@@ -182,6 +182,21 @@ def _keyboard(version_id: str) -> dict:
     }
 
 
+def _video_keyboard(version_id: str) -> dict:
+    """The second gate: the rendered video, before anyone else sees it.
+
+    Deliberately two buttons and no "regenerate". At this point the money is
+    already spent, so the only questions left are whether it goes out and
+    whether it is kept.
+    """
+    return {
+        "inline_keyboard": [[
+            {"text": "🚀 Publicar", "callback_data": f"publicar:{version_id}"},
+            {"text": "🗑 No publicar", "callback_data": f"descartar:{version_id}"},
+        ]]
+    }
+
+
 async def send_review(script: dict, version_id: str, **kwargs) -> dict:
     """Put a script in front of the operator with its four buttons."""
     return await _call("sendMessage", {
@@ -231,16 +246,23 @@ def video_fields(caption: str = "", *, width: int | None = None,
 
 
 async def send_video(path: str, caption: str = "", *, width: int | None = None,
-                     height: int | None = None,
-                     duration: float | None = None) -> dict:
-    """Send the finished video. Used after publishing, as a record."""
+                     height: int | None = None, duration: float | None = None,
+                     version_id: str | None = None) -> dict:
+    """Send the finished video, with the publish buttons when it needs them.
+
+    ``version_id`` turns this into the second gate: the video arrives with
+    "Publicar" and "No publicar" bound to that version, so a tap on an old
+    message cannot release today's.
+    """
     autenia.require("review")
+    data = video_fields(caption, width=width, height=height, duration=duration)
+    if version_id:
+        data["reply_markup"] = json.dumps(_video_keyboard(version_id))
     with open(path, "rb") as handle:
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{_base()}/sendVideo",
-                data=video_fields(caption, width=width, height=height,
-                                  duration=duration),
+                data=data,
                 files={"video": (path.rsplit("/", 1)[-1], handle, "video/mp4")},
             )
     body = response.json()
@@ -316,7 +338,8 @@ def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | 
         if ":" not in data:
             return None
         kind, version_id = data.split(":", 1)
-        if kind not in ("aprobar", "cambios", "rechazar", "regenerar"):
+        if kind not in ("aprobar", "cambios", "rechazar", "regenerar",
+                        "publicar", "descartar"):
             return None
         return Action(kind=kind, version_id=version_id,
                       callback_id=callback.get("id"))

@@ -20,8 +20,11 @@ LEGAL = [
     (State.EN_REVISION, State.DESCARTADO),
     (State.APROBADO, State.RENDERIZANDO),
     (State.APROBADO, State.DESCARTADO),
-    (State.RENDERIZANDO, State.PUBLICADO),
+    (State.RENDERIZANDO, State.REVISION_VIDEO),
     (State.RENDERIZANDO, State.FALLIDO),
+    (State.REVISION_VIDEO, State.PUBLICADO),
+    (State.REVISION_VIDEO, State.DESCARTADO),
+    (State.REVISION_VIDEO, State.FALLIDO),
 ]
 
 
@@ -41,6 +44,10 @@ def test_legal_transitions_are_allowed(current, target):
     (State.CANDIDATO, State.APROBADO),
     # Rendering cannot be re-entered to have another go at spending.
     (State.RENDERIZANDO, State.RENDERIZANDO),
+    # The second gate is not optional: a render cannot publish itself.
+    (State.RENDERIZANDO, State.PUBLICADO),
+    # And a video waiting to be let out cannot go back for another render.
+    (State.REVISION_VIDEO, State.RENDERIZANDO),
 ])
 def test_illegal_transitions_raise(current, target):
     assert not can_transition(current, target)
@@ -96,3 +103,22 @@ def test_every_state_has_a_transition_rule():
     """A state missing from the table would raise KeyError at runtime."""
     from autenia.states import TRANSITIONS
     assert set(TRANSITIONS) == set(State)
+
+
+# -- the second gate -------------------------------------------------------
+
+def test_the_video_gate_holds_the_words_frozen_too():
+    """A rendered video and its script must keep saying the same thing."""
+    assert State.REVISION_VIDEO in FROZEN
+    with pytest.raises(ImmutableVersionError):
+        assert_mutable(State.REVISION_VIDEO)
+
+
+def test_waiting_on_a_video_is_not_terminal():
+    """Every path out of it must reach publicado, descartado or fallido."""
+    assert not is_terminal(State.REVISION_VIDEO)
+
+
+def test_waiting_on_a_video_does_not_spend():
+    """The money was spent in renderizando; this state only waits."""
+    assert not spends(State.REVISION_VIDEO)

@@ -326,7 +326,8 @@ async def has_active_cycle(sess: AsyncSession) -> bool:
     """
     count = await sess.scalar(
         select(func.count()).select_from(Version)
-        .where(Version.state.in_([State.RENDERIZANDO, State.EN_REVISION, State.APROBADO]))
+        .where(Version.state.in_([State.RENDERIZANDO, State.EN_REVISION,
+                                  State.APROBADO, State.REVISION_VIDEO]))
     )
     return bool(count)
 

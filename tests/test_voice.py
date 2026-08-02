@@ -143,3 +143,23 @@ def test_gemini_is_left_alone(monkeypatch):
     """La regla es sobre las cuatro voces de ElevenLabs, no sobre el proveedor."""
     monkeypatch.setenv("AUTENIA_VOICE_PROVIDER", "gemini")
     assert voice.for_script({"genero": "historia"}) is None
+
+
+# -- lo que se dice, no lo que se escribe ----------------------------------
+
+@pytest.mark.parametrize("escrito,dicho", [
+    ("reduce un 30% los costes", "reduce un 30 por ciento los costes"),
+    ("el 7,7 % de absentismo", "el 7,7 por ciento de absentismo"),
+    ("cuesta 5.000 €", "cuesta 5.000 euros"),
+    ("ahorras 4 h a la semana", "ahorras 4 horas a la semana"),
+])
+def test_symbols_are_spelled_out_for_the_voice(escrito, dicho):
+    """El 1/08/2026 la locución dijo "reduce un treinta costes": el % se cayó."""
+    assert voice.speakable(escrito) == dicho
+
+
+def test_the_subtitle_keeps_the_symbol():
+    """Solo cambia lo que se manda al sintetizador; el guion no se toca."""
+    guion = "reduce un 30% los costes"
+    assert voice.speakable(guion) != guion
+    assert "30%" in guion

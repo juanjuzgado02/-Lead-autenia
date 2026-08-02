@@ -33,6 +33,7 @@ import httpx
 
 from core_config import settings as autenia
 
+from . import revision
 from .gemini import BASE, GeminiError, request
 
 #: The cheapest Veo tier that still looks like footage. Verified 2026-07-30
@@ -161,6 +162,18 @@ async def generate(prompt: str, *, seconds: int = CLIP_SECONDS,
 
     uri = await _await_video(operation)
     path = await _download(uri, cache_path(prompt))
+
+    # Revisado antes de entrar en la biblioteca, no antes de usarse: lo que se
+    # cachea se reutiliza durante meses, así que un plano con una mano de más
+    # que entre aquí sale en un vídeo de dentro de seis semanas.
+    #
+    # Sin reintento, al revés que las fotos: un clip cuesta veinte veces más, y
+    # la escena tiene debajo una fotografía que sí se puede repetir barata.
+    veredicto = await revision.revisar(path)
+    if not veredicto.apto:
+        await revision.descartar(path, str(veredicto))
+        raise ClipError(f"el clip no pasa revisión: {veredicto}")
+
     _remember(path, description or prompt[:300])
     return path
 

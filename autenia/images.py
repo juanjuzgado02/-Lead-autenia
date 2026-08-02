@@ -32,6 +32,7 @@ import re
 
 from core_config import settings as autenia
 
+from . import revision
 from .gemini import GeminiError, request
 
 #: Fast image model. The pro tier costs several times more for a background
@@ -185,8 +186,15 @@ def cache_path(prompt: str) -> str:
     return os.path.join(CACHE_DIR, f"{digest}.jpg")
 
 
-async def generate(prompt: str, *, timeout: float = 180.0) -> str:
-    """Return a path to an image for this prompt, generating it if needed."""
+async def generate(prompt: str, *, timeout: float = 180.0,
+                   intentos: int = 2) -> str:
+    """Return a path to an image for this prompt, generating it if needed.
+
+    A picture that comes out with six fingers is regenerated rather than used:
+    an image costs about three cents, and the same prompt run twice is a
+    different photograph. Two tries and then the scene falls back to type —
+    paying four times for one background is worse than a card.
+    """
     path = cache_path(prompt)
     if os.path.isfile(path) and os.path.getsize(path) > 1024:
         return path
@@ -220,7 +228,14 @@ async def generate(prompt: str, *, timeout: float = 180.0) -> str:
         with open(staging, "wb") as handle:
             handle.write(raw)
         os.replace(staging, path)
-        return path
+
+        veredicto = await revision.revisar(path)
+        if veredicto.apto:
+            return path
+        await revision.descartar(path, str(veredicto))
+        if intentos > 1:
+            return await generate(prompt, timeout=timeout, intentos=intentos - 1)
+        raise ImageError(f"la imagen no pasa revisión: {veredicto}")
 
     raise ImageError("the image model returned no image")
 

@@ -11,6 +11,7 @@ the same thing (a mono WAV at ``out_path``) and are selected by
 
 from __future__ import annotations
 
+import re
 import wave
 from dataclasses import dataclass
 
@@ -164,6 +165,40 @@ def words_per_second(provider: str | None = None) -> float:
     return PALABRAS_POR_SEGUNDO.get(chosen, PALABRAS_POR_SEGUNDO_DEFECTO)
 
 
+#: Símbolos que un TTS se salta o lee mal, y cómo se dicen en voz alta.
+#:
+#: Detectado el 2 de agosto de 2026 escuchando el primer vídeo con ElevenLabs:
+#: el guion decía "reduce un 30% los costes" y la locución dijo "reduce un
+#: treinta costes". El símbolo desapareció, y con él la unidad — que en un canal
+#: que vive de cifras es justo la palabra que había que oír.
+#:
+#: Se arregla aquí y no en el prompt del guion porque el guion se escribe para
+#: leerse: el subtítulo debe seguir diciendo "30%", que es como se lee más
+#: rápido en pantalla. Lo que cambia es solo lo que se manda a la voz.
+_HABLADO = (
+    (re.compile(r"(\d)\s*%"), r"\1 por ciento"),
+    (re.compile(r"(\d)\s*€"), r"\1 euros"),
+    (re.compile(r"(\d)\s*\$"), r"\1 dólares"),
+    (re.compile(r"(\d)\s*h\b"), r"\1 horas"),
+    (re.compile(r"(\d)\s*km\b"), r"\1 kilómetros"),
+    (re.compile(r"\bnº\s*", re.IGNORECASE), "número "),
+    (re.compile(r"\betc\.", re.IGNORECASE), "etcétera"),
+    # Un símbolo suelto sin número delante: se dice igual.
+    (re.compile(r"%"), " por ciento"),
+    (re.compile(r"€"), " euros"),
+)
+
+
+def speakable(text: str) -> str:
+    """El mismo texto, escrito como se pronuncia.
+
+    Solo para el sintetizador: el subtítulo y el guion conservan los símbolos.
+    """
+    for patron, reemplazo in _HABLADO:
+        text = patron.sub(reemplazo, text)
+    return " ".join(text.split())
+
+
 class VoiceError(RuntimeError):
     """Speech synthesis failed. Message is safe to log."""
 
@@ -201,11 +236,14 @@ async def synthesize(text: str, *, out_path: str,
     if not text or not text.strip():
         raise VoiceError("nothing to speak: the narration is empty")
 
+    # Lo que se dice, no lo que se escribe: el símbolo % no se pronuncia solo.
+    dicho = speakable(text)
+
     chosen = provider or autenia.voice_provider
     if chosen == "gemini":
-        path = await _gemini(text, out_path, name)
+        path = await _gemini(dicho, out_path, name)
     elif chosen == "elevenlabs":
-        path = await _elevenlabs(text, out_path, name)
+        path = await _elevenlabs(dicho, out_path, name)
     else:  # pragma: no cover - core_config validates this
         raise VoiceError(f"unknown voice provider {chosen!r}")
 

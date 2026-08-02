@@ -61,6 +61,44 @@ ELEVENLABS_ALIASES = {
 }
 
 
+#: La voz de las historias. Marco Cruz lee distinto un relato que un dato, y un
+#: guion con protagonista pide a alguien contándolo, no a alguien informando.
+VOZ_HISTORIA = ELEVENLABS_VOICES[3][0]
+
+#: Las tres que se reparten lo demás. Rotan por día del año, no al azar: un
+#: canal que suena igual todos los días cansa, y uno que cambia de voz sin
+#: patrón suena a que lo llevan tres personas distintas.
+VOCES_NOTICIA = (ELEVENLABS_VOICES[0][0], ELEVENLABS_VOICES[1][0],
+                 ELEVENLABS_VOICES[2][0])
+
+
+def for_script(script: dict, *, provider: str | None = None,
+               when=None) -> str | None:
+    """Qué voz lee este guion, o ``None`` para dejar la configurada.
+
+    Dos reglas, decididas por Juan el 2 de agosto de 2026: las historias las
+    lee Marco Cruz, y el resto se reparte entre las otras tres rotando por día.
+
+    Una voz fijada a mano en ``AUTENIA_VOICE_NAME`` gana siempre: si alguien la
+    escribió es porque quiere esa y no un turno.
+
+    La rotación es por día, así que dos vídeos del mismo día comparten voz. Es
+    el caso raro —el canal publica uno al día— y la alternativa, rotar por
+    vídeo, obligaría a esta función a consultar la base de datos para decidir
+    algo que se oye en dos segundos.
+    """
+    chosen = provider or autenia.voice_provider
+    if chosen != "elevenlabs" or autenia.voice_name:
+        return None
+
+    if (script or {}).get("genero") == "historia":
+        return VOZ_HISTORIA
+
+    from datetime import date  # noqa: PLC0415
+    dia = (when or date.today()).toordinal()
+    return VOCES_NOTICIA[dia % len(VOCES_NOTICIA)]
+
+
 def elevenlabs_voice(name: str | None = None) -> str:
     """The voice id to speak with: an alias, a raw id, or the default.
 

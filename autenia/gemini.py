@@ -265,6 +265,14 @@ RITMO
 - Termina las frases en la palabra que importa. "Cuatro horas al mes" pega más
   al final que en medio.
 
+GÉNERO
+- Declara en "genero" qué has escrito, porque decide qué voz lo lee.
+- "historia": hay un protagonista y le pasan cosas en orden. "Marta lleva una
+  gestoría en Cuenca. Cada lunes dedicaba…". Se cuenta, no se informa.
+- "noticia": el resto. Un dato, lo que implica y qué hacer con él. Es lo normal
+  aquí, así que en la duda pon "noticia": una historia a medias contada suena
+  peor que una noticia bien contada.
+
 VOZ
 - Sí: "Esto son cuatro horas al mes que no vuelves a tocar."
 - No: "Revoluciona tu negocio con el poder transformador de la IA."
@@ -332,6 +340,9 @@ _SCRIPT_SCHEMA = {
         "titulo": {"type": "string"},
         "caption": {"type": "string"},
         "duracion_estimada_s": {"type": "number"},
+        # Optional on purpose: it decides which voice reads the piece, and a
+        # script that forgets to say gets the default rather than no video.
+        "genero": {"type": "string", "enum": ["noticia", "historia"]},
     },
     "required": ["hook", "escenas", "cta", "titulo", "caption", "duracion_estimada_s"],
 }

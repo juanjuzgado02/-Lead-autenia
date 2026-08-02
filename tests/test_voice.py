@@ -98,3 +98,48 @@ def test_a_foreign_id_still_works_but_says_so(monkeypatch, capsys):
 async def test_the_audition_offers_exactly_those_four(monkeypatch):
     monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
     assert await voice.catalogue("elevenlabs") == list(voice.ELEVENLABS_VOICES)
+
+
+# -- qué voz lee qué -------------------------------------------------------
+
+from datetime import date  # noqa: E402
+
+
+@pytest.fixture
+def eleven(monkeypatch):
+    monkeypatch.setenv("AUTENIA_VOICE_PROVIDER", "elevenlabs")
+    monkeypatch.delenv("AUTENIA_VOICE_NAME", raising=False)
+
+
+def test_a_story_is_read_by_marco_cruz(eleven):
+    """Un relato con protagonista se cuenta, no se informa."""
+    assert voice.for_script({"genero": "historia"}) == voice.VOZ_HISTORIA
+
+
+@pytest.mark.parametrize("guion", [
+    {"genero": "noticia"}, {}, {"genero": "cualquier-cosa"}, None,
+])
+def test_everything_else_rotates_among_the_other_three(eleven, guion):
+    """En la duda, noticia: una historia a medias suena peor."""
+    elegida = voice.for_script(guion)
+    assert elegida in voice.VOCES_NOTICIA
+    assert elegida != voice.VOZ_HISTORIA
+
+
+def test_the_rotation_actually_rotates(eleven):
+    """Tres días seguidos son tres voces distintas."""
+    dias = [date(2026, 8, 2), date(2026, 8, 3), date(2026, 8, 4)]
+    elegidas = [voice.for_script({}, when=d) for d in dias]
+    assert len(set(elegidas)) == 3
+
+
+def test_a_voice_set_by_hand_beats_the_rotation(eleven, monkeypatch):
+    """Si alguien la escribió es porque quiere esa, no un turno."""
+    monkeypatch.setenv("AUTENIA_VOICE_NAME", "Emilio")
+    assert voice.for_script({"genero": "historia"}) is None
+
+
+def test_gemini_is_left_alone(monkeypatch):
+    """La regla es sobre las cuatro voces de ElevenLabs, no sobre el proveedor."""
+    monkeypatch.setenv("AUTENIA_VOICE_PROVIDER", "gemini")
+    assert voice.for_script({"genero": "historia"}) is None

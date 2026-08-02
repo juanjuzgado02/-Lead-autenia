@@ -132,7 +132,7 @@ async def test_image_generation_can_be_switched_off(tmp_path, monkeypatch):
     assert not called
 
 
-async def _noop(segments, workdir):
+async def _noop(segments, workdir, voice_name=None):
     for segment in segments:
         segment.duration_s = 1.0
 

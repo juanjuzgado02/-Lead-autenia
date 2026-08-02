@@ -690,16 +690,20 @@ def _split_points(total_s: float, segments: list[Segment],
     return points
 
 
-async def narrate(segments: list[Segment], workdir: str) -> None:
+async def narrate(segments: list[Segment], workdir: str,
+                  voice_name: str | None = None) -> None:
     """Speak the whole script in one take, then cut it into segments.
 
     One continuous performance rather than one call per line: independent calls
     drift in tone and energy, and the result sounds like several narrators
     taking turns. The cost is identical and the voice stays one voice.
+
+    ``voice_name`` is which voice reads this particular script — stories get a
+    different one from news. ``None`` leaves whatever is configured.
     """
     full_text = " ".join(segment.text.strip() for segment in segments)
     take = os.path.join(workdir, "voz.wav")
-    spoken = await voice.synthesize(full_text, out_path=take)
+    spoken = await voice.synthesize(full_text, out_path=take, name=voice_name)
 
     if len(segments) == 1:
         segments[0].audio_path = spoken.path
@@ -849,7 +853,9 @@ async def prepare(script: dict, *, workdir: str,
         for segment, taken in zip(uncovered, pictures):
             segment.image_paths = list(taken)
 
-    await narrate(segments, workdir)
+    # Which of Autenia's voices reads this one is an editorial rule about the
+    # script, so it is decided from the script rather than from the renderer.
+    await narrate(segments, workdir, voice.for_script(script))
     return segments
 
 

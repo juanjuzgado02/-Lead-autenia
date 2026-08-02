@@ -77,7 +77,14 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 7. **Second gate** (`revision_video`) — the finished video goes back to the
    chat with `Publicar` / `No publicar`. Rendering never publishes on its own:
    approving a script is not the same as having seen what came out of it, and
-   the platform is the one place with no undo.
+   the platform is the one place with no undo. There is a third answer that has
+   no button because it has to be typed: **describing the defect**. That text
+   goes to `revision.culpables`, which asks the model which of the generated
+   pieces has what the operator saw, deletes those from the cache
+   (`revision.descartar`) and re-proposes the same script. Approving it again
+   re-renders, and the scene whose material was deleted is bought fresh. When no
+   piece can be blamed nothing is deleted and the chat says so — a defect in the
+   words, the pacing or the voice is answered with `Cambios`, not with a purge.
 8. **Publish** (`autenia/publish.py`) — one Upload-Post call per network so a
    single refusal cannot hide two successes. `AUTENIA_REDES` picks which
    networks (Autenia posts to YouTube only; the rest are uploaded by hand from

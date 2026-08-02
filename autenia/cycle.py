@@ -19,14 +19,31 @@ from dataclasses import dataclass
 from core_config import settings as autenia
 
 from . import assets as asset_lib
-from . import (editorial, formats, gemini, preflight, publish, render, sources,
-               store, telegram, voice)
+from . import (editorial, formats, gemini, preflight, publish, render, revision,
+               sources, store, telegram, voice)
 from .models import Content, Version
 from .states import State, StateError
 
 #: Where rendered videos and the footage library live.
 WORK_ROOT = os.environ.get("AUTENIA_WORK_DIR", "data/videos")
 LIBRARY_DIR = os.environ.get("AUTENIA_LIBRARY_DIR", "data/library")
+
+#: Lo que Telegram acepta en el pie de un vídeo. Lo que pasa de aquí no da
+#: error: se corta y ya, así que el mensaje se ajusta antes de enviarlo.
+CAPTION_LIMIT = 1024
+
+#: Marca dónde irá la descripción de YouTube mientras se mide el resto.
+_HUECO = "@@descripcion@@"
+
+
+def _recortar(texto: str, sitio: int) -> str:
+    """La descripción, cortada por una palabra y ya escapada para HTML."""
+    if sitio < 120:
+        return "…"           # no cabe nada legible; media frase confunde más
+    corte = sitio - 40       # margen para lo que engorda el escapado (& → &amp;)
+    if len(texto) <= corte:
+        return telegram.escape(texto)
+    return telegram.escape(texto[:corte].rsplit(" ", 1)[0]) + "…"
 
 
 @dataclass
@@ -252,15 +269,29 @@ async def _idle_text(action: telegram.Action) -> None:
 
 
 async def _video_defect(action: telegram.Action) -> None:
-    """El vídeo tenía un fallo: se tira y el mismo guion vuelve a la cola.
+    """El vídeo tenía un fallo: se busca de qué pieza es, se tira, y el mismo
+    guion vuelve a la cola.
 
     No se reescribe el guion, que no tenía la culpa, y no se republica el vídeo,
     que no se puede arreglar. Lo que se hace es proponer otra vez las mismas
-    palabras: aprobar de nuevo vuelve a montar, y el metraje que causó el fallo
-    ya lo habrá quitado el revisor —o lo quitas tú— así que la segunda pasada
-    coge otro plano.
+    palabras, después de sacar del caché el material en el que está el fallo:
+    aprobar de nuevo vuelve a montar, y esa escena se compra otra vez porque ya
+    no hay nada guardado que la responda.
+
+    Sin ese borrado esto sería teatro. El caché se empareja por significado, así
+    que el segundo montaje del mismo guion pedía las mismas escenas y recibía
+    exactamente los mismos ficheros — el vídeo "arreglado" salía idéntico al que
+    se acababa de rechazar.
     """
     defecto = (action.text or "").strip()
+
+    async with store.session() as sess:
+        previa = await sess.get(Version, action.version_id)
+        generados = store.inherited_assets(previa).get("generados") or []
+
+    quitados = await revision.culpables(list(generados), defecto)
+    for path, motivo in quitados.items():
+        await revision.descartar(path, f"el operador: {motivo}")
 
     async with store.session() as sess:
         previa = await sess.get(Version, action.version_id)
@@ -270,10 +301,24 @@ async def _video_defect(action: telegram.Action) -> None:
         script = json.loads(nueva.script) if nueva.script else {}
         nueva_id, numero = nueva.id, nueva.number
 
+    if quitados:
+        cuenta = len(quitados)
+        pieza = "pieza" if cuenta == 1 else "piezas"
+        detalle = "; ".join(telegram.escape(m) for m in list(quitados.values())[:3])
+        aviso = (f"He quitado {cuenta} {pieza} del caché ({detalle}). "
+                 f"Aprobar vuelve a montarlo y esa escena se compra de nuevo.")
+    else:
+        # Decirlo. Un "arreglado" que no ha arreglado nada es peor que un fallo:
+        # se aprueba a ciegas, sale el mismo vídeo y se paga el montaje otra vez.
+        aviso = ("No he sabido en qué pieza está eso, así que no he borrado "
+                 "nada: si vuelves a aprobar tal cual, el montaje puede salir "
+                 "igual. Si el fallo era de las palabras, del ritmo o de la voz, "
+                 "dale a ✏️ Cambios aquí abajo y cuéntamelo.")
+
     await telegram.send_message(
         f"🔁 Anotado: «{telegram.escape(defecto[:120])}».\n"
         f"<i>El guion no tenía la culpa, así que te lo propongo igual. "
-        f"Aprobar vuelve a montarlo, y el material defectuoso ya no está.</i>")
+        f"{aviso}</i>")
     await telegram.send_review(
         script, nueva_id, version_number=numero,
         estimated_seconds=preflight.estimate_seconds(
@@ -418,6 +463,7 @@ def _publish_preview(script: dict, caption: str, result) -> str:
     title = script.get("titulo") or script.get("hook") or "Autenia"
     lines = [f"🎬 <b>Listo.</b> {result.duration_s:.0f}s · "
              f"{result.coverage:.0%} material propio"]
+    descripcion_larga = ""
 
     visibilidad = {"public": "público", "unlisted": "no listado",
                    "private": "privado"}
@@ -430,11 +476,13 @@ def _publish_preview(script: dict, caption: str, result) -> str:
                        else "vídeo normal (no cumple para Short)")
             estado = campos["privacyStatus"]
             # Telegram caps a video caption at 1024 characters and cuts what
-            # goes over. A description trimmed here ends where it decides to,
-            # rather than mid-word at whatever the limit happens to land on.
+            # goes over. La descripción se deja marcada y se recorta al final,
+            # cuando ya se sabe cuánto sitio ha ocupado todo lo demás: es lo
+            # único largo y variable aquí, así que es lo que cede. Recortarla a
+            # ojo dejaba el mensaje justo en el límite, y lo que se caía por el
+            # borde era la última línea — la que explica cómo pedir un arreglo.
             descripcion = campos["youtube_description"]
-            if len(descripcion) > 600:
-                descripcion = descripcion[:600].rsplit(" ", 1)[0] + "…"
+            descripcion_larga, descripcion = descripcion, _HUECO
             lines += [
                 "",
                 f"📺 <b>YouTube</b> · {formato} · "
@@ -450,7 +498,34 @@ def _publish_preview(script: dict, caption: str, result) -> str:
     lines.append("🧪 <b>Simulación:</b> «Publicar» no enviará nada."
                  if autenia.publish_dry_run
                  else "<b>Publicar</b> lo sube tal cual. Eso no se deshace.")
-    return "\n".join(lines)
+    # La tercera salida, que no cabe en un botón porque hay que escribirla: un
+    # vídeo casi bueno no es «publicar» ni «tirar», es «esto de aquí está mal».
+    lines.append("")
+    lines.append("<i>¿Algo mal en la imagen? Escríbelo aquí y lo busco: quito "
+                 "esa pieza del caché y te devuelvo el mismo guion para volver "
+                 "a montarlo. «No publicar» lo cierra sin arreglar nada.</i>")
+
+    texto = "\n".join(lines)
+    if _HUECO in texto:
+        sitio = CAPTION_LIMIT - (len(texto) - len(_HUECO))
+        texto = texto.replace(_HUECO, _recortar(descripcion_larga, sitio))
+    return texto
+
+
+def _generated_assets(result) -> list[str]:
+    """Las piezas *generadas* que salen en este vídeo, en orden de aparición.
+
+    Sólo las generadas. El metraje propio de `data/library` sale de aquí porque
+    lo que esta lista habilita es borrar, y borrar material que alguien grabó
+    porque un modelo cree haber visto algo raro en él es un daño que no se
+    deshace con dinero.
+    """
+    piezas: list[str] = []
+    for segment in getattr(result, "segments", []):
+        for path in [segment.clip_path, *segment.image_paths]:
+            if path and path not in piezas:
+                piezas.append(path)
+    return piezas
 
 
 async def _render_and_publish(version_id: str, script: dict) -> None:
@@ -474,6 +549,7 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
         fresh = await sess.get(Version, version_id)
         fresh.video_path = result.path
         fresh.duration_s = result.duration_s
+        fresh.asset_hashes = json.dumps({"generados": _generated_assets(result)})
         caption = fresh.caption or ""
         # Out of `renderizando` as soon as the spending is over: that state
         # allows one version per content and blocks the next cycle while it is

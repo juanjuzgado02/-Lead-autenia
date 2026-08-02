@@ -188,6 +188,100 @@ async def _preguntar(imagenes: list[str]) -> Veredicto:
                      revisado=True)
 
 
+_SISTEMA_QUEJA = """\
+Una persona ha visto un vídeo montado con varias piezas y ha señalado un fallo.
+Te enseñamos UNA de esas piezas. Contesta sólo esto: ¿el fallo que describe está
+en ESTA pieza?
+
+Di que sí únicamente si lo que ves se corresponde con lo que describe. Si la
+pieza es correcta, o el fallo que describe no puede verse aquí —habla del ritmo,
+de la voz, de los subtítulos, de lo que se dice—, di que no.
+
+Ante la duda, di que no: esta pieza está pagada y decir que sí la borra.\
+"""
+
+_ESQUEMA_QUEJA = {
+    "type": "object",
+    "properties": {
+        "coincide": {"type": "boolean"},
+        "por_que": {"type": "string"},
+    },
+    "required": ["coincide", "por_que"],
+}
+
+
+async def culpable(path: str, queja: str) -> str | None:
+    """¿Es esta pieza la que el operador ha visto mal? Devuelve por qué, o None.
+
+    Es el revisor al revés. `revisar` mira una pieza recién generada sin saber
+    qué busca; aquí ya hay alguien que ha visto el vídeo terminado y ha dicho
+    qué le pasa, y lo único que falta es averiguar en cuál de las cinco o seis
+    piezas está eso que ha visto.
+
+    Y la duda cambia de lado. En `revisar` la duda absuelve porque tumbar el
+    material deja al canal sin vídeo; aquí la duda deja la pieza donde está,
+    porque borrarla tira algo pagado que a lo mejor no tenía nada malo. Un
+    fallo que no se sabe localizar es mejor contarlo —el operador siempre puede
+    no publicar— que pagar de nuevo todo el material por si acaso.
+    """
+    queja = (queja or "").strip()
+    if not queja or not enabled() or not os.path.isfile(path):
+        return None
+
+    es_video = path.lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
+    imagenes = frames_of(path) if es_video else [path]
+    if not imagenes:
+        return None
+
+    partes: list[dict] = [{"text": f"El fallo que ha visto: «{queja}»"}]
+    for imagen in imagenes:
+        leido = _jpeg(imagen)
+        if leido is None:
+            continue
+        mime, datos = leido
+        partes.append({"inlineData": {"mimeType": mime,
+                                      "data": base64.b64encode(datos).decode()}})
+
+    try:
+        if len(partes) == 1:
+            return None
+        payload = await request(
+            f"models/{TEXT_MODEL}:generateContent",
+            {
+                "contents": [{"parts": partes}],
+                "systemInstruction": {"parts": [{"text": _SISTEMA_QUEJA}]},
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": _ESQUEMA_QUEJA,
+                    "temperature": 0.0,
+                },
+            },
+            timeout=120.0,
+        )
+        texto = "".join(
+            parte.get("text", "")
+            for parte in payload["candidates"][0]["content"]["parts"])
+        datos = json.loads(texto)
+        if not datos.get("coincide"):
+            return None
+        return str(datos.get("por_que") or queja)[:200]
+    except (GeminiError, KeyError, IndexError, ValueError, json.JSONDecodeError) as exc:
+        print(f"[revision] no se pudo localizar la queja en "
+              f"{os.path.basename(path)}: {str(exc)[:120]}")
+        return None
+    finally:
+        if es_video and imagenes:
+            shutil.rmtree(os.path.dirname(imagenes[0]), ignore_errors=True)
+
+
+async def culpables(paths: list[str], queja: str) -> dict[str, str]:
+    """Cuáles de estas piezas tienen el fallo que se ha descrito."""
+    motivos = await asyncio.gather(*(culpable(p, queja) for p in paths),
+                                   return_exceptions=True)
+    return {path: motivo for path, motivo in zip(paths, motivos)
+            if isinstance(motivo, str) and motivo}
+
+
 async def revisar(path: str) -> Veredicto:
     """¿Se puede publicar esta imagen o este clip?
 

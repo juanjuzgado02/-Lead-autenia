@@ -366,7 +366,10 @@ async def _render_and_publish(version_id: str, script: dict) -> None:
     await telegram.send_video(
         result.path,
         f"{'🧪 Simulando publicación' if autenia.publish_dry_run else '📤 Publicando'}…\n"
-        f"{result.duration_s:.0f}s · {result.coverage:.0%} material propio")
+        f"{result.duration_s:.0f}s · {result.coverage:.0%} material propio",
+        # Told, not guessed: Telegram does not read them off the file, and a
+        # vertical master with no dimensions arrives looking squashed.
+        width=render.WIDTH, height=render.HEIGHT, duration=result.duration_s)
 
     try:
         outcomes = await publish.publish(

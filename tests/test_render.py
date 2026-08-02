@@ -300,3 +300,50 @@ def test_the_kinetic_caption_carries_its_own_outline_because_it_has_no_plate(tmp
     assert corner[3] == 0, "there must be no plate behind kinetic type"
     assert any(image.getpixel((x, image.height // 2))[3] > 0
                for x in range(image.width)), "the words must still be drawn"
+
+
+# -- the master must be a short, and must arrive looking like one -----------
+
+def _stream(**overrides):
+    stream = {"codec_type": "video", "width": 1080, "height": 1920,
+              "sample_aspect_ratio": "1:1"}
+    return {"streams": [{**stream, **overrides}]}
+
+
+def test_a_correct_master_passes_verification(monkeypatch):
+    monkeypatch.setattr(render, "probe", lambda path: _stream())
+    render._assert_vertical("short.mp4")   # no raise
+
+
+def test_a_landscape_master_is_refused(monkeypatch):
+    """It looks fine in a log and squashed in the feed, so the pixels decide."""
+    monkeypatch.setattr(render, "probe",
+                        lambda path: _stream(width=1920, height=1080))
+    with pytest.raises(render.RenderError, match="aplastado"):
+        render._assert_vertical("short.mp4")
+
+
+def test_non_square_pixels_are_refused(monkeypatch):
+    """1080x1920 with a stretched SAR plays stretched anyway."""
+    monkeypatch.setattr(render, "probe",
+                        lambda path: _stream(sample_aspect_ratio="4:3"))
+    with pytest.raises(render.RenderError, match="estirado"):
+        render._assert_vertical("short.mp4")
+
+
+def test_no_ffprobe_does_not_throw_away_a_good_render(monkeypatch):
+    """The encode already worked; a missing tool is not a failed video."""
+    def no_binary(path):
+        raise render.RenderError("ffprobe is not on PATH")
+    monkeypatch.setattr(render, "probe", no_binary)
+    render._assert_vertical("short.mp4")   # no raise
+
+
+def test_telegram_is_told_the_dimensions():
+    """Without them a 1080x1920 master arrives in the chat looking squashed."""
+    from autenia import telegram
+    fields = telegram.video_fields("pie", width=1080, height=1920, duration=29.7)
+    assert fields["width"] == "1080"
+    assert fields["height"] == "1920"
+    assert fields["duration"] == "30"
+    assert fields["supports_streaming"] == "true"

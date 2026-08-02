@@ -203,15 +203,44 @@ async def send_message(text: str) -> dict:
     })
 
 
-async def send_video(path: str, caption: str = "") -> dict:
+def video_fields(caption: str = "", *, width: int | None = None,
+                 height: int | None = None,
+                 duration: float | None = None) -> dict:
+    """The form fields for one sendVideo call.
+
+    Telegram does **not** reliably read the dimensions out of the file: without
+    them the player falls back to its own box, and a 1080x1920 master arrives
+    looking squashed even though the file is perfect. Measured on 2026-08-01 on
+    a short that ffprobe confirmed was exactly 1080x1920.
+
+    So the caller states them. ``supports_streaming`` is what makes the video
+    play in place instead of downloading first.
+    """
+    data = {
+        "chat_id": autenia.telegram_chat_id,
+        "caption": caption[:1024],
+        "parse_mode": "HTML",
+        "supports_streaming": "true",
+    }
+    if width and height:
+        data["width"] = str(int(width))
+        data["height"] = str(int(height))
+    if duration:
+        data["duration"] = str(int(round(duration)))
+    return data
+
+
+async def send_video(path: str, caption: str = "", *, width: int | None = None,
+                     height: int | None = None,
+                     duration: float | None = None) -> dict:
     """Send the finished video. Used after publishing, as a record."""
     autenia.require("review")
     with open(path, "rb") as handle:
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{_base()}/sendVideo",
-                data={"chat_id": autenia.telegram_chat_id,
-                      "caption": caption[:1024], "parse_mode": "HTML"},
+                data=video_fields(caption, width=width, height=height,
+                                  duration=duration),
                 files={"video": (path.rsplit("/", 1)[-1], handle, "video/mp4")},
             )
     body = response.json()

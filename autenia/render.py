@@ -783,6 +783,8 @@ def compose(segments: list[Segment], out_path: str, workdir: str, *,
           "-c:v", "copy", *ff.audio_encode_args(), "-b:a", "192k", "-ar", "48000",
           "-shortest", "-movflags", "+faststart", out_path])
 
+    _assert_vertical(out_path)
+
     total = sum(segment.duration_s for segment in segments)
     used = [segment.asset_path for segment in segments]
     return Rendered(
@@ -860,6 +862,43 @@ async def render(script: dict, *, out_path: str, workdir: str,
     segments = await prepare(script, workdir=workdir, library_dir=library_dir,
                              generate_images=generate_images, fmt=fmt)
     return compose(segments, out_path, workdir, fmt=fmt)
+
+
+def _assert_vertical(path: str) -> None:
+    """Refuse a master that is not exactly the 9:16 frame the feeds expect.
+
+    Cheap, and it closes the worst failure this renderer has: every filter here
+    covers and crops rather than stretching, but one wrong scale in one branch
+    would produce a squashed video that looks fine in a log, gets approved on
+    the strength of its script, and is only noticed by whoever watches it.
+    Pixels are the only thing worth trusting here, so they are what is checked.
+
+    Also verifies the pixels are square: a 1080x1920 frame with a non-square
+    sample aspect ratio plays stretched despite measuring correct.
+    """
+    try:
+        info = probe(path)
+    except RenderError:
+        # No ffprobe means no verification, not a failed render: the encode
+        # already succeeded, and refusing here would throw away a good video.
+        return
+
+    stream = next((s for s in info.get("streams", [])
+                   if s.get("codec_type") == "video"), None)
+    if stream is None:
+        raise RenderError("the master has no video stream")
+
+    width, height = stream.get("width"), stream.get("height")
+    if (width, height) != (WIDTH, HEIGHT):
+        raise RenderError(
+            f"el máster salió a {width}x{height} y tiene que ser "
+            f"{WIDTH}x{HEIGHT}: en vertical eso se ve aplastado")
+
+    sar = stream.get("sample_aspect_ratio")
+    if sar and sar not in ("1:1", "0:1"):
+        raise RenderError(
+            f"el máster tiene píxeles no cuadrados (SAR {sar}): se reproduce "
+            f"estirado aunque mida {WIDTH}x{HEIGHT}")
 
 
 def probe(path: str) -> dict:

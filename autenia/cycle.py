@@ -135,6 +135,7 @@ async def handle(action: telegram.Action) -> None:
         "tema": _on_request,
         "publicar": _publish_video,
         "descartar": _discard_video,
+        "ocioso": _idle_text,
     }
     handler = handlers.get(action.kind)
     if handler is None:
@@ -229,6 +230,25 @@ async def _feedback(action: telegram.Action) -> None:
         await _video_defect(action)
         return
     await _rewrite(action.version_id, feedback=action.text)
+
+
+async def _idle_text(action: telegram.Action) -> None:
+    """Un texto cuando no hay nada esperando. No se archiva, pero se contesta.
+
+    Ocurrió el 2 de agosto: Juan descartó un vídeo con el botón y después
+    escribió el fallo que le había visto. El texto llegó cuando ya no había
+    nada en cola, así que el bot lo ignoró — correcto por dentro y roto por
+    fuera, porque él se quedó esperando una reacción que nunca iba a llegar.
+    """
+    await telegram.send_message(
+        "🤔 No tengo nada esperando ahora mismo, así que no sé a qué se refiere "
+        "eso.\n\n"
+        "· <code>/guion &lt;tema&gt;</code> — escribo uno sobre lo que me digas\n"
+        "· Si acabas de descartar un vídeo, su guion ya está cerrado: pídeme "
+        "otro con <code>/guion</code> y el fallo que viste no se repetirá, "
+        "porque ese material ya no está en el caché.\n\n"
+        "<i>Cuando haya un guion o un vídeo esperando, un mensaje suelto sí es "
+        "una corrección y lo aplico.</i>")
 
 
 async def _video_defect(action: telegram.Action) -> None:

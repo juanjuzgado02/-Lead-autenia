@@ -362,7 +362,12 @@ def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | 
 
     waiting = list(awaiting or ())
     if not waiting:
-        return None
+        # Nada esperando: el texto no se archiva como instrucciones —un "gracias"
+        # acabaría siendo el feedback del próximo render— pero tampoco se traga
+        # en silencio. Un bot que no contesta a su único usuario autorizado se
+        # lee como un bot roto, y el operador se queda esperando algo que no va
+        # a pasar.
+        return Action(kind="ocioso", version_id=None, text=text)
     # With several scripts in review, the newest is the one being discussed.
     # A set has no order to trust, so sort it; a sequence is taken as given,
     # which is how the caller passes them in the order they were sent.

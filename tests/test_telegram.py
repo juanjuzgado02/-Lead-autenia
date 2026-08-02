@@ -83,9 +83,16 @@ def test_text_is_feedback_only_while_something_waits():
 
 
 def test_idle_chatter_is_not_filed_as_instructions():
-    """Nothing is waiting, so 'gracias' must not become the next brief."""
-    assert parse_update(message("gracias!"), awaiting=set()) is None
-    assert parse_update(message("gracias!")) is None
+    """Nothing is waiting, so 'gracias' must not become the next brief.
+
+    Se contesta —callar del todo hacía que el bot pareciera roto— pero con un
+    tipo distinto: "ocioso" no toca ninguna versión ni encarga nada, que es lo
+    que esta prueba defiende desde el principio.
+    """
+    for update in (message("gracias!"), message("gracias!")):
+        action = parse_update(update, awaiting=set())
+        assert action.kind == "ocioso"
+        assert action.version_id is None
 
 
 def test_an_empty_message_is_ignored():
@@ -243,3 +250,15 @@ def test_the_video_keyboard_offers_only_the_two_real_choices():
 
 def test_a_video_button_from_any_other_chat_is_ignored():
     assert parse_update(callback("publicar:v1", chat_id=STRANGER)) is None
+
+
+def test_idle_text_is_answered_not_swallowed():
+    """Callar es correcto por dentro y roto por fuera: el operador espera algo."""
+    action = parse_update(message("salen tres brazos"), awaiting=[])
+    assert action == Action(kind="ocioso", version_id=None,
+                            text="salen tres brazos")
+
+
+def test_idle_text_from_any_other_chat_is_still_ignored():
+    """Contestar a un desconocido confirma que el bot existe."""
+    assert parse_update(message("hola", chat_id=STRANGER), awaiting=[]) is None

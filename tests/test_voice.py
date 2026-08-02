@@ -50,3 +50,51 @@ def test_elevenlabs_is_estimated_generously_not_optimistically():
     short = voice.estimate_cents("hola", provider="elevenlabs")
     long = voice.estimate_cents("hola " * 500, provider="elevenlabs")
     assert long > short >= 0
+
+
+# -- las cuatro voces de ElevenLabs ----------------------------------------
+
+def test_only_the_four_approved_voices_are_offered():
+    """Elegidas por Juan el 2/08/2026; todas nativas de España."""
+    nombres = [d for _id, d in voice.ELEVENLABS_VOICES]
+    assert len(voice.ELEVENLABS_VOICES) == 4
+    assert any("Cadalso" in n for n in nombres)
+    assert any("Emilio" in n for n in nombres)
+    assert any("Ernesto" in n for n in nombres)
+    assert any("Marco Cruz" in n for n in nombres)
+
+
+def test_the_default_is_one_of_the_four():
+    assert voice.ELEVENLABS_DEFAULT_VOICE in {i for i, _ in voice.ELEVENLABS_VOICES}
+
+
+@pytest.mark.parametrize("escrito,esperado_nombre", [
+    ("Cadalso", "Cadalso"), ("cadalso", "Cadalso"),
+    ("Emilio", "Emilio"), ("ERNESTO", "Ernesto"),
+    ("Marco Cruz", "Marco Cruz"), ("marco", "Marco Cruz"),
+])
+def test_the_env_can_name_a_voice_instead_of_pasting_an_id(monkeypatch, escrito,
+                                                          esperado_nombre):
+    """Un id de veinte caracteres en el .env no se puede revisar de un vistazo."""
+    monkeypatch.setenv("AUTENIA_VOICE_NAME", escrito)
+    resuelto = voice.elevenlabs_voice()
+    descripcion = dict(voice.ELEVENLABS_VOICES)[resuelto]
+    assert descripcion.startswith(esperado_nombre)
+
+
+def test_without_a_name_it_falls_back_to_the_default(monkeypatch):
+    monkeypatch.delenv("AUTENIA_VOICE_NAME", raising=False)
+    assert voice.elevenlabs_voice() == voice.ELEVENLABS_DEFAULT_VOICE
+
+
+def test_a_foreign_id_still_works_but_says_so(monkeypatch, capsys):
+    """Un experimento se permite; lo que no se permite es que sea silencioso."""
+    monkeypatch.setenv("AUTENIA_VOICE_NAME", "XXotroidcualquiera")
+    assert voice.elevenlabs_voice() == "XXotroidcualquiera"
+    assert "no es una de las cuatro" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_the_audition_offers_exactly_those_four(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    assert await voice.catalogue("elevenlabs") == list(voice.ELEVENLABS_VOICES)

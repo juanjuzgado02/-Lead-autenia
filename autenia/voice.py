@@ -22,30 +22,63 @@ from . import gemini
 
 #: ElevenLabs' multilingual model handles Spanish; v2 is the stable one.
 ELEVENLABS_MODEL = "eleven_multilingual_v2"
-#: A neutral Spanish-capable default. Override with AUTENIA_VOICE_NAME.
-#:
-#: This is a fallback, not a choice: the voice is picked by listening, with
-#: ``python autenia_bot.py voces``, and the winner goes in AUTENIA_VOICE_NAME.
-ELEVENLABS_DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL"
 
-#: ElevenLabs' public premade voices, male, with fixed ids every account can
-#: use. The fallback for a key created without the ``voices_read`` permission —
-#: which is the default now, and which otherwise kills the audition even though
-#: synthesis itself works fine.
+#: The only ElevenLabs voices this channel uses, chosen by Juan on 2026-08-02.
 #:
-#: These are English-native voices reading Spanish through the multilingual
-#: model. They are good, but a Spanish-native voice from the account's own
-#: library is better; widening the key's permissions is what unlocks that.
-ELEVENLABS_PUBLIC_MALE = (
-    ("JBFqnCBsd6RMkjVDRZzb", "George — británica, cálida"),
-    ("nPczCjzI2devNBz1zQrb", "Brian — grave, narrador"),
-    ("pqHfZKP75CvOlQylNhV4", "Bill — serena, de confianza"),
-    ("onwK4e9ZLuTAKqWW03F9", "Daniel — británica, con autoridad"),
-    ("CwhRBWXzGAHq8TQ4Fs17", "Roger — segura, directa"),
-    ("cjVigY5qzO86Huf0OWal", "Eric — cercana, conversacional"),
-    ("bIHbv24MWmeRgasZH58o", "Will — joven, natural"),
-    ("TX3LPaxmHKxFdv7VOQHJ", "Liam — enérgica"),
+#: All four are **native Spanish from Spain**, which is the whole reason the
+#: previous list is gone: it held ElevenLabs' English premade voices reading
+#: Spanish through the multilingual model, and the account's own 28 voices are
+#: 22 English ones plus a handful of Spanish that an audition truncated to
+#: "the first eight" never reached.
+#:
+#: They are library voices, not account voices, and they were verified on
+#: 2026-08-02 to synthesise directly from their public id with this key — so
+#: nothing has to be added to the account for them to work.
+#:
+#: **Do not widen this list without Juan hearing the alternative.** It is the
+#: voice on every video the company publishes.
+ELEVENLABS_VOICES = (
+    ("dq5fzy66iCKSIQWm5YMU", "Cadalso — redonda, agradable y creíble"),
+    ("ZCh4e9eZSUf41K4cmCEL", "Emilio — cálida, sólida y convincente"),
+    ("TOFW0dONbX4o9MmkxwBB", "Ernesto — cercana, dinámica y natural"),
+    ("FmAk3rEwAp8LKP5FV4ao", "Marco Cruz — sólida, persuasiva e inteligente"),
 )
+
+#: Which one speaks when nobody says otherwise. First of the four, and a
+#: placeholder in the honest sense: the choice between them is made by
+#: listening, with ``python autenia_bot.py voces``, and the winner goes in
+#: AUTENIA_VOICE_NAME.
+ELEVENLABS_DEFAULT_VOICE = ELEVENLABS_VOICES[0][0]
+
+#: So the ``.env`` can say ``AUTENIA_VOICE_NAME=Cadalso`` instead of carrying a
+#: twenty-character id that nobody can check at a glance.
+ELEVENLABS_ALIASES = {
+    "cadalso": ELEVENLABS_VOICES[0][0],
+    "emilio": ELEVENLABS_VOICES[1][0],
+    "ernesto": ELEVENLABS_VOICES[2][0],
+    "marco": ELEVENLABS_VOICES[3][0],
+    "marco cruz": ELEVENLABS_VOICES[3][0],
+}
+
+
+def elevenlabs_voice(name: str | None = None) -> str:
+    """The voice id to speak with: an alias, a raw id, or the default.
+
+    A raw id that is not one of the four is passed through rather than refused —
+    it is how an experiment happens — but it says so, because the difference
+    between "I am testing a voice" and "the brand voice changed and nobody
+    noticed" is whether anybody was told.
+    """
+    chosen = (name or autenia.voice_name or "").strip()
+    if not chosen:
+        return ELEVENLABS_DEFAULT_VOICE
+    known = ELEVENLABS_ALIASES.get(chosen.lower())
+    if known:
+        return known
+    if chosen not in {vid for vid, _ in ELEVENLABS_VOICES}:
+        print(f"[voice] {chosen} no es una de las cuatro voces de Autenia; "
+              f"se usa igualmente, pero no es la voz de la marca")
+    return chosen
 
 #: Gemini's male prebuilt voices, with the character each one advertises.
 #: Sampled 2026-07-30; Juan chose Iapetus.
@@ -134,7 +167,7 @@ async def _gemini(text: str, out_path: str, name: str | None = None) -> str:
 
 async def _elevenlabs(text: str, out_path: str, name: str | None = None) -> str:
     autenia.require("voice")
-    voice_id = name or autenia.voice_name or ELEVENLABS_DEFAULT_VOICE
+    voice_id = elevenlabs_voice(name)
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
     async with httpx.AsyncClient(timeout=300.0) as client:
@@ -159,68 +192,22 @@ async def _elevenlabs(text: str, out_path: str, name: str | None = None) -> str:
     return out_path
 
 
-async def catalogue(provider: str | None = None,
-                    *, male_only: bool = True) -> list[tuple[str, str]]:
+async def catalogue(provider: str | None = None) -> list[tuple[str, str]]:
     """Voices worth auditioning, as ``(id, description)``.
 
-    Gemini's prebuilt list is fixed and known. ElevenLabs depends on the
-    account, so it is asked — a hardcoded voice id is a guess about somebody
-    else's library, and the whole point is that the choice is made by ear.
+    Both lists are fixed and short on purpose. It used to ask ElevenLabs for
+    the account's voices and sort the Spanish ones to the front, which was a
+    workaround for a list that was mostly English and mostly irrelevant: an
+    audition of "the first eight" sent eight English voices. Choosing between
+    four voices somebody already vetted is a better use of a listen than
+    ranking twenty-eight that nobody did.
     """
     chosen = provider or autenia.voice_provider
     if chosen == "gemini":
         return [(name, f"{name} — {character}")
                 for name, character in GEMINI_MALE_VOICES]
-
     autenia.require("voice")
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.get(
-            "https://api.elevenlabs.io/v1/voices",
-            headers={"xi-api-key": autenia.elevenlabs_api_key})
-
-    if response.status_code in (401, 403):
-        # ElevenLabs scopes keys, and a new one has no `voices_read` by
-        # default. Synthesis still works, so falling back to the public voices
-        # lets the audition happen anyway rather than failing on a permission
-        # that has nothing to do with speaking.
-        return list(ELEVENLABS_PUBLIC_MALE)
-    if response.status_code != 200:
-        raise VoiceError(
-            f"ElevenLabs returned {response.status_code}: {response.text[:200]}")
-
-    found = []
-    for entry in response.json().get("voices", []):
-        labels = entry.get("labels") or {}
-        if male_only and labels.get("gender", "").lower() not in ("", "male"):
-            continue
-        detail = ", ".join(
-            str(labels[key]) for key in ("accent", "age", "description")
-            if labels.get(key))
-        name = entry.get("name", "sin nombre")
-        found.append((
-            _spanishness(entry, labels),
-            entry["voice_id"],
-            f"{name} — {detail}" if detail else name,
-        ))
-
-    # Native Spanish first, and Spain's accent before Latin America's. The
-    # audition is truncated to a handful of voices: on 2026-07-30 an account
-    # with 23 voices had its only two Spanish ones sitting last in the list,
-    # so a run that sent the first eight sent eight English ones. Autenia
-    # publishes in Spanish only — the language is not a tie-break, it is the
-    # first thing that matters.
-    found.sort(key=lambda row: (-row[0], row[2]))
-    return [(voice_id, description) for _rank, voice_id, description in found]
-
-
-def _spanishness(entry: dict, labels: dict) -> int:
-    """2 for a Spain-accented Spanish voice, 1 for any Spanish, 0 otherwise."""
-    language = (labels.get("language")
-                or (entry.get("fine_tuning") or {}).get("language") or "")
-    accent = str(labels.get("accent", "")).lower()
-    if not str(language).lower().startswith("es"):
-        return 0
-    return 2 if accent in ("peninsular", "spanish", "castilian", "spain") else 1
+    return list(ELEVENLABS_VOICES)
 
 
 def _duration_s(path: str) -> float:

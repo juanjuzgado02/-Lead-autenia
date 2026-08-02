@@ -5,6 +5,7 @@
     python autenia_bot.py cycle      # find a topic and send its script
     python autenia_bot.py both       # run one cycle, then keep listening
     python autenia_bot.py voces      # send voice auditions to Telegram
+    python autenia_bot.py voces elevenlabs   # ...from the other provider
 
 Long polling, so this needs no domain, no certificate and no open ports.
 """
@@ -50,7 +51,7 @@ async def run_cycle_once() -> None:
     await telegram.send_message(f"{message}\n<i>{result.detail}</i>")
 
 
-async def audition_voices(limit: int = 8) -> None:
+async def audition_voices(limit: int = 8, provider: str | None = None) -> None:
     """Read one line in every candidate voice and send them all to Telegram.
 
     The voice is Autenia's on every video it publishes, so it is chosen by ear,
@@ -58,7 +59,10 @@ async def audition_voices(limit: int = 8) -> None:
     provider changes or a new voice appears, listen, and put the winner in
     ``AUTENIA_VOICE_NAME``.
     """
-    provider = autenia.voice_provider
+    # Comparing the two providers is the point of an audition, and having to
+    # edit .env between halves of a comparison is how the comparison stops
+    # happening.
+    provider = provider or autenia.voice_provider
     voices = (await voice.catalogue(provider))[:limit]
     if not voices:
         await telegram.send_message(
@@ -119,7 +123,7 @@ async def main() -> int:
         return 1
 
     if command == "voces":
-        await audition_voices()
+        await audition_voices(provider=sys.argv[2] if len(sys.argv) > 2 else None)
         return 0
     if command in ("cycle", "both"):
         await run_cycle_once()

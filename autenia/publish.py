@@ -66,6 +66,33 @@ def youtube_privacy() -> str:
     choice = (os.environ.get("AUTENIA_YOUTUBE_PRIVACY") or "public").strip().lower()
     return choice if choice in ("public", "unlisted", "private") else "public"
 
+
+#: What the CTA in the narration points at. A description without it is a video
+#: that asks people to visit a site and does not say which.
+WEB = "https://auteniaai.com/"
+
+#: The first three show above the title on a Short, so they are the only ones
+#: most viewers ever see. Broad on purpose: they describe the channel, not the
+#: video, and a tag nobody searches is a tag that does nothing.
+HASHTAGS = "#pymes #automatizacion #IA"
+
+#: 28 is "Science & Technology". The vendor's default is 22, "People & Blogs",
+#: which is where a video about invoicing software goes to not be found.
+CATEGORY = "28"
+
+
+def youtube_description(caption: str) -> str:
+    """The description as it should read under the video.
+
+    Built here rather than asked of the model: the caption is written for a
+    human reading a feed, and the link and the tags are the same on every
+    video. Nothing about this costs an extra call — it rides in the upload.
+    """
+    web = (os.environ.get("AUTENIA_WEB") or WEB).strip()
+    tags = (os.environ.get("AUTENIA_YOUTUBE_HASHTAGS") or HASHTAGS).strip()
+    parts = [caption.strip(), f"👉 {web}" if web else "", tags]
+    return "\n\n".join(part for part in parts if part)
+
 #: What each network truncates silently or rejects outright. YouTube's 100-char
 #: title is the tight one; the rest are generous but not infinite.
 TITLE_LIMIT = {"youtube": 100, "tiktok": 150, "instagram": 150}
@@ -115,10 +142,26 @@ def key_for(version_id: str, platform: str) -> str:
 def _clip(text: str, limit: int) -> str:
     """Cut to the limit at a word boundary, so nothing ends mid-word.
 
+    Collapses whitespace, because this is for titles: a title is one line, and
+    a stray newline in one is a rejected upload.
+
     The ellipsis is part of the budget, not added on top of it — YouTube counts
     it, and a title one character over is rejected outright.
     """
-    text = " ".join(text.split())
+    return _shorten(" ".join(text.split()), limit)
+
+
+def _clip_body(text: str, limit: int) -> str:
+    """The same, for a description, where the line breaks are the layout.
+
+    Ran through :func:`_clip` at first, which flattened the link and the tags
+    into the end of the first paragraph — correct by the character count and
+    wrong on the page.
+    """
+    return _shorten(text.strip(), limit)
+
+
+def _shorten(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     room = limit - 1
@@ -146,8 +189,19 @@ def _payload(platform: str, *, user: str, title: str, body: str) -> dict:
         data["media_type"] = "REELS"
     elif platform == "youtube":
         data["youtube_title"] = data["title"]
-        data["youtube_description"] = caption
+        data["youtube_description"] = _clip_body(
+            youtube_description(caption), BODY_LIMIT["youtube"])
         data["privacyStatus"] = youtube_privacy()
+        data["categoryId"] = os.environ.get("AUTENIA_YOUTUBE_CATEGORIA", CATEGORY)
+        # Spanish, said out loud rather than guessed from the audio: it decides
+        # who the video is shown to, and guessing wrong is invisible from here.
+        data["defaultLanguage"] = "es"
+        data["defaultAudioLanguage"] = "es-ES"
+        # The footage is generated and the voice is synthetic, and both look and
+        # sound real. YouTube requires that to be declared, and declaring it is
+        # also the only position consistent with "experiencia real, no hype":
+        # this channel argues that AI is useful, not that it is undetectable.
+        data["containsSyntheticMedia"] = "true"
     return data
 
 

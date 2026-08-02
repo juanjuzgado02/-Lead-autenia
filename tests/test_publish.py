@@ -279,3 +279,65 @@ def test_youtube_privacy_falls_back_to_public(monkeypatch, valor, esperado):
     assert publish.youtube_privacy() == esperado
     assert publish._payload("youtube", user="autenia", title="t",
                             body="c")["privacyStatus"] == esperado
+
+
+# -- everything YouTube accepts in the same call ---------------------------
+
+def test_the_description_carries_the_link_and_the_tags():
+    """The narration says "en la web"; the description has to say which web."""
+    text = publish.youtube_description("La factura electrónica será obligatoria.")
+    assert "La factura electrónica será obligatoria." in text
+    assert "auteniaai.com" in text
+    assert "#pymes" in text
+
+
+def test_the_description_is_configurable_without_touching_code(monkeypatch):
+    monkeypatch.setenv("AUTENIA_WEB", "https://ejemplo.es/")
+    monkeypatch.setenv("AUTENIA_YOUTUBE_HASHTAGS", "#uno #dos")
+    text = publish.youtube_description("cuerpo")
+    assert "https://ejemplo.es/" in text and "#uno #dos" in text
+    assert "auteniaai" not in text
+
+
+def test_an_empty_caption_still_yields_a_usable_description():
+    text = publish.youtube_description("")
+    assert text.startswith("👉") and "#" in text
+
+
+def test_the_upload_declares_spanish_and_a_findable_category():
+    data = publish._payload("youtube", user="autenia", title="t", body="c")
+    assert data["defaultLanguage"] == "es"
+    assert data["defaultAudioLanguage"] == "es-ES"
+    assert data["categoryId"] == "28"        # no "People & Blogs"
+
+
+def test_the_upload_declares_the_video_is_generated():
+    """Photoreal footage and a synthetic voice: YouTube wants that said."""
+    data = publish._payload("youtube", user="autenia", title="t", body="c")
+    assert data["containsSyntheticMedia"] == "true"
+
+
+def test_a_long_description_is_cut_to_youtubes_limit():
+    data = publish._payload("youtube", user="autenia", title="t",
+                            body="palabra " * 2000)
+    assert len(data["youtube_description"]) <= publish.BODY_LIMIT["youtube"]
+
+
+def test_the_other_networks_do_not_get_youtube_fields():
+    for platform in ("tiktok", "instagram"):
+        data = publish._payload(platform, user="autenia", title="t", body="c")
+        assert "categoryId" not in data
+        assert "containsSyntheticMedia" not in data
+
+
+def test_the_description_keeps_its_line_breaks():
+    """The link and the tags are their own paragraphs, not a tail on the first."""
+    data = publish._payload("youtube", user="autenia", title="t",
+                            body="La factura electrónica será obligatoria.")
+    assert data["youtube_description"].count("\n") >= 2
+    assert data["youtube_description"].splitlines()[0].endswith("obligatoria.")
+
+
+def test_a_title_still_loses_its_line_breaks():
+    """A newline in a title is a rejected upload."""
+    assert "\n" not in publish._clip("dos\nlíneas", 100)

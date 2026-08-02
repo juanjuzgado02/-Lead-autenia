@@ -347,3 +347,98 @@ def test_telegram_is_told_the_dimensions():
     assert fields["height"] == "1920"
     assert fields["duration"] == "30"
     assert fields["supports_streaming"] == "true"
+
+
+# -- dónde se corta la voz -------------------------------------------------
+#
+# El subtítulo de cada escena sale mientras suena el trozo de voz de esa
+# escena. Si el corte no cae en la pausa real, la imagen dice una cosa y la voz
+# otra, y el desfase se arrastra hasta el final del vídeo. No había ni un test
+# sobre esto, que es exactamente por qué llegó a producción dos veces.
+
+#: Los silencios medidos en la locución del vídeo del 2 de agosto de 2026.
+#: Las fronteras de frase de verdad son 5,409 · 12,022 · 16,702 · 20,909.
+SILENCIOS_REALES = [
+    (0.627, 0.926), (2.236, 2.620), (4.660, 6.159), (7.871, 8.421),
+    (11.374, 12.670), (15.920, 17.485), (20.698, 21.121), (23.173, 23.507),
+    (24.621, 24.985),
+]
+TOTAL_REAL = 24.985
+GUION_REAL = [
+    "Tu equipo pierde mañanas enteras contestando las mismas dudas de clientes.",
+    "Según Contact Center Hub, la IA resuelve hasta el noventa por ciento.",
+    "Dejas de copiar respuestas para enfocarte solo en vender más.",
+    "Tu equipo se libera por completo de la atención repetitiva.",
+    "Haz el cuestionario de un minuto en la web y analiza tu empresa.",
+]
+
+
+def _segmentos(textos):
+    return [Segment(kind="escena", text=t, visual_request="") for t in textos]
+
+
+def test_every_cut_lands_on_a_real_pause():
+    """El caso que se publicó mal: sólo el primer corte caía en una pausa.
+
+    La primera frase se leyó a 2,01 palabras por segundo y el resto a 2,25-2,47.
+    Estimando por palabras y aceptando la pausa más cercana sólo si estaba a
+    menos de 1,2 s, el reparto se desviaba y los tres últimos cortes caían en
+    mitad de la frase, con 1,7 a 2,0 s de desfase.
+    """
+    puntos = render._split_points(TOTAL_REAL, _segmentos(GUION_REAL),
+                                  SILENCIOS_REALES)
+    # Los centros de las cuatro pausas que separan las cinco frases.
+    assert puntos == pytest.approx([5.409, 12.022, 16.702, 20.909], abs=0.002)
+
+
+def test_a_cut_is_never_left_in_the_middle_of_a_sentence():
+    """Dicho como lo nota quien lo ve: cada corte, dentro de un silencio."""
+    puntos = render._split_points(TOTAL_REAL, _segmentos(GUION_REAL),
+                                  SILENCIOS_REALES)
+    for punto in puntos:
+        assert any(inicio <= punto <= fin for inicio, fin in SILENCIOS_REALES), \
+            f"el corte en {punto}s cae mientras se habla"
+
+
+def test_the_cuts_go_forwards_and_leave_every_scene_something_to_say():
+    puntos = render._split_points(TOTAL_REAL, _segmentos(GUION_REAL),
+                                  SILENCIOS_REALES)
+    bordes = [0.0, *puntos, TOTAL_REAL]
+    duraciones = [b - a for a, b in zip(bordes, bordes[1:])]
+    assert all(d >= render.MIN_SEGMENT_S for d in duraciones)
+    assert puntos == sorted(puntos)
+
+
+def test_the_last_pause_of_all_is_not_a_cut():
+    """Cortar en el silencio final dejaría a la última escena sin voz."""
+    puntos = render._split_points(TOTAL_REAL, _segmentos(GUION_REAL),
+                                  SILENCIOS_REALES)
+    assert max(puntos) < TOTAL_REAL - render.MIN_SEGMENT_S
+
+
+def test_one_segment_is_not_cut_at_all():
+    assert render._split_points(10.0, _segmentos(["Una sola frase."]), []) == []
+
+
+def test_without_pauses_it_still_divides_the_take():
+    """Un corte estimado es peor que uno real; no tener vídeo es peor que los dos."""
+    puntos = render._split_points(12.0, _segmentos(["Uno dos.", "Tres cuatro."]), [])
+    assert puntos == [6.0]
+
+
+def test_half_an_assignment_is_not_taken():
+    """Con menos pausas que fronteras se reparte por palabras y ya está.
+
+    Mezclar cortes reales con estimados reparte el desfase en vez de quitarlo:
+    la escena que se lleva la pausa buena empuja a las demás.
+    """
+    segmentos = _segmentos(["Uno dos.", "Tres cuatro.", "Cinco seis."])
+    puntos = render._split_points(12.0, segmentos, [(7.5, 8.5)])
+    assert puntos == [4.0, 8.0]  # proporcional, sin usar la única pausa
+
+
+def test_a_pause_that_fits_the_estimate_is_used():
+    """Lo que ya funcionaba sigue funcionando: la pausa manda sobre el reparto."""
+    segmentos = _segmentos(["Uno dos.", "Tres cuatro."])
+    puntos = render._split_points(12.0, segmentos, [(6.4, 7.0)])
+    assert puntos == [6.7]

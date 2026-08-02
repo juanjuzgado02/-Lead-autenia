@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import wave
 from dataclasses import asdict, dataclass, field, fields
 
 from . import assets as asset_lib
@@ -659,37 +660,99 @@ def _silences(path: str, *, threshold_db: int = -34,
     return spans
 
 
+#: Lo mínimo que puede durar un trozo de voz. Dos cortes más juntos que esto
+#: son el mismo silencio contado dos veces, y dejarían una escena muda.
+MIN_SEGMENT_S = 0.35
+
+
 def _split_points(total_s: float, segments: list[Segment],
                   silences: list[tuple[float, float]]) -> list[float]:
     """Where to cut the take so each segment gets its own words.
 
-    Starts from where each segment *should* end if speech were perfectly even,
-    then snaps to the nearest real pause. Snapping is what keeps a visual cut
-    from landing in the middle of a word; the proportional estimate alone is
-    close but not clean.
+    Las fronteras se reparten **todas a la vez**, no una por una. La versión que
+    las miraba por separado —estimar dónde debería acabar cada escena si se
+    hablara a ritmo constante, y aceptar la pausa más cercana sólo si caía a
+    menos de 1,2 s— fallaba de una forma concreta y fea, medida sobre el vídeo
+    del 2 de agosto de 2026: la primera frase se leyó a 2,01 palabras por
+    segundo y el resto a 2,25-2,47, la estimación se fue desviando, y desde el
+    segundo corte ninguna pausa volvió a estar lo bastante cerca. Los tres
+    cortes restantes cayeron en mitad de una frase, con 1,7 a 2,0 s de desfase,
+    y el subtítulo de cada escena entraba mientras la voz seguía diciendo la
+    anterior.
+
+    El problema es que la pausa correcta para una frontera depende de qué
+    pausas se lleven las demás. Mirándolas de una en una, un corte que se desvía
+    empuja a todos los siguientes y no hay forma de volver; mirándolas juntas,
+    la asignación buena gana aunque cada corte suelto parezca peor, porque lo
+    que se minimiza es la desviación **total**.
+
+    Así que se eligen n-1 pausas crecientes, una por frontera, minimizando lo
+    que se apartan del reparto por palabras. Es programación dinámica sobre una
+    lista corta: media docena de fronteras y unas cuantas pausas.
+
+    Sin pausas suficientes se reparte por palabras y ya está, que es lo que
+    había: un corte estimado es peor que uno real, pero no tener vídeo es peor
+    que las dos cosas.
     """
     lengths = [max(1, len(re.findall(r"\S+", s.text))) for s in segments]
     total_words = sum(lengths)
 
-    points: list[float] = []
-    running = 0
-    previous = 0.0
+    esperados: list[float] = []
+    acumuladas = 0
     for length in lengths[:-1]:
-        running += length
-        target = total_s * running / total_words
-        # Only consider pauses after the previous cut, or two segments could
-        # snap to the same silence and one would end up with no audio at all.
-        usable = [mid for start, end in silences
-                  if (mid := (start + end) / 2) > previous + 0.35
-                  and mid < total_s - 0.35]
-        if usable:
-            nearest = min(usable, key=lambda point: abs(point - target))
-            # A pause far from the estimate belongs to a different sentence.
-            if abs(nearest - target) < 1.2:
-                target = nearest
-        previous = target
-        points.append(round(target, 3))
-    return points
+        acumuladas += length
+        esperados.append(total_s * acumuladas / total_words)
+    if not esperados:
+        return []
+
+    pausas = sorted(
+        medio for inicio, fin in silences
+        if MIN_SEGMENT_S < (medio := (inicio + fin) / 2) < total_s - MIN_SEGMENT_S)
+
+    elegidas = _assign_pauses(esperados, pausas)
+    return [round(punto, 3) for punto in (elegidas or esperados)]
+
+
+def _assign_pauses(esperados: list[float],
+                   pausas: list[float]) -> list[float] | None:
+    """Una pausa por frontera, crecientes, con la desviación total más pequeña.
+
+    ``None`` cuando no hay pausas suficientes para dárselas a todas: media
+    asignación es peor que ninguna, porque mezclar cortes reales con estimados
+    reparte el desfase en vez de quitarlo.
+    """
+    n, m = len(esperados), len(pausas)
+    if m < n:
+        return None
+
+    INFINITO = float("inf")
+    coste = [[INFINITO] * m for _ in range(n)]
+    desde = [[-1] * m for _ in range(n)]
+
+    for j in range(m):
+        coste[0][j] = abs(pausas[j] - esperados[0])
+
+    for i in range(1, n):
+        for j in range(i, m):
+            for k in range(j):
+                if coste[i - 1][k] == INFINITO:
+                    continue
+                if pausas[j] - pausas[k] < MIN_SEGMENT_S:
+                    continue
+                candidato = coste[i - 1][k] + abs(pausas[j] - esperados[i])
+                if candidato < coste[i][j]:
+                    coste[i][j], desde[i][j] = candidato, k
+
+    final = min(range(m), key=lambda j: coste[n - 1][j])
+    if coste[n - 1][final] == INFINITO:
+        return None
+
+    elegidas = [0.0] * n
+    j = final
+    for i in range(n - 1, -1, -1):
+        elegidas[i] = pausas[j]
+        j = desde[i][j]
+    return elegidas
 
 
 async def narrate(segments: list[Segment], workdir: str,
@@ -710,14 +773,29 @@ async def narrate(segments: list[Segment], workdir: str,
     full_text = " ".join(segment.text.strip() for segment in segments)
     take = os.path.join(workdir, "voz.wav")
     spoken = await voice.narracion(full_text, out_path=take, name=voice_name)
+    recut(segments, workdir, take=spoken.path, total_s=spoken.duration_s)
+
+
+def recut(segments: list[Segment], workdir: str, *,
+          take: str | None = None, total_s: float | None = None) -> None:
+    """Repartir una toma ya grabada entre las escenas, cortando en las pausas.
+
+    Separado de :func:`narrate` porque es la mitad que no cuesta nada. Una toma
+    buena mal repartida se arregla aquí sin volver a comprar la voz, y hasta
+    ahora la única forma de volver a cortarla era volver a pagarla.
+    """
+    take = take or os.path.join(workdir, "voz.wav")
+    if total_s is None:
+        with wave.open(take, "rb") as handle:
+            total_s = handle.getnframes() / float(handle.getframerate())
 
     if len(segments) == 1:
-        segments[0].audio_path = spoken.path
-        segments[0].duration_s = spoken.duration_s
+        segments[0].audio_path = take
+        segments[0].duration_s = total_s
         return
 
-    points = _split_points(spoken.duration_s, segments, _silences(take))
-    bounds = [0.0, *points, spoken.duration_s]
+    points = _split_points(total_s, segments, _silences(take))
+    bounds = [0.0, *points, total_s]
 
     ffmpeg = _ffmpeg()
     for index, segment in enumerate(segments):

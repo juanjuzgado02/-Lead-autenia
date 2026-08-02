@@ -127,3 +127,39 @@ def test_only_new_images_are_charged():
     before = {"/cache/a.jpg"}
     paths = ["/cache/a.jpg", "/cache/b.jpg", None]
     assert images.cost_cents(paths, before=before) == images.IMAGE_COST_CENTS
+
+
+# -- brands the model would otherwise draw ---------------------------------
+
+def test_a_named_brand_never_reaches_the_model():
+    """A generated WhatsApp mark reached a finished video on 2026-08-01."""
+    subject, found = images.strip_brands(
+        "Captura de un agente contestando en WhatsApp")
+    assert "whatsapp" not in subject.lower()
+    assert "aplicación de mensajería" in subject
+    assert found == ["whatsapp"]
+
+
+def test_the_meaning_of_the_shot_survives():
+    subject, _ = images.strip_brands("pantalla de Excel con facturas")
+    assert "hoja de cálculo" in subject
+    assert "facturas" in subject
+
+
+def test_the_prompt_bans_the_brand_by_name():
+    """A model told only "no logos" still draws the one it was just asked for."""
+    prompt = images.build_prompt("un agente contestando en WhatsApp")
+    assert "whatsapp" not in prompt.lower().split("nada de")[0]
+    assert "Ninguna aplicación reconocible" in prompt
+
+
+def test_a_scene_with_no_brand_is_left_alone():
+    subject, found = images.strip_brands("manos ordenando papeles en una mesa")
+    assert subject == "manos ordenando papeles en una mesa"
+    assert found == []
+
+
+def test_a_word_that_merely_contains_a_brand_is_not_one():
+    subject, found = images.strip_brands("una sala de reuniones amplia")
+    assert found == []
+    assert subject == "una sala de reuniones amplia"

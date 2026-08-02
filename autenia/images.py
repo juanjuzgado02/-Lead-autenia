@@ -74,6 +74,56 @@ _SCREEN_CONTEXT = (
     "Si aparece un monitor, que salga desenfocado o de refilón."
 )
 
+#: Brands a script names because that is how a person describes the work —
+#: "un agente contestando en WhatsApp" — and which an image model then draws,
+#: logo and all. Measured 2026-08-01: a generated frame carried a full WhatsApp
+#: mark on a monitor, in a video meant to be published under Autenia's name.
+#:
+#: The generic ban ("sin logotipos") does not survive the brand being named in
+#: the same sentence, so the name never reaches the model. The meaning does:
+#: what matters to the shot is that somebody is answering messages, not which
+#: company's app they use.
+_BRANDS = {
+    "whatsapp": "una aplicación de mensajería en el móvil",
+    "instagram": "una red social en el móvil",
+    "tiktok": "una red social en el móvil",
+    "facebook": "una red social en el móvil",
+    "gmail": "una bandeja de correo",
+    "outlook": "una bandeja de correo",
+    "excel": "una hoja de cálculo",
+    "word": "un documento de texto",
+    "teams": "una videollamada de trabajo",
+    "slack": "una conversación de trabajo",
+    "zoom": "una videollamada de trabajo",
+    "sap": "un programa de gestión",
+    "odoo": "un programa de gestión",
+    "salesforce": "un programa de gestión",
+    "holded": "un programa de gestión",
+    "sage": "un programa de gestión",
+}
+
+_BRAND_PATTERN = re.compile(
+    r"\b(" + "|".join(sorted(_BRANDS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE)
+
+
+def strip_brands(subject: str) -> tuple[str, list[str]]:
+    """The same scene with brand names swapped for what they are.
+
+    Returns the rewritten subject and which brands were found, so the prompt can
+    name them in its ban: a model told only "no logos" still draws the one it
+    was just asked about.
+    """
+    found: list[str] = []
+
+    def swap(match: re.Match) -> str:
+        brand = match.group(0).lower()
+        if brand not in found:
+            found.append(brand)
+        return _BRANDS[brand]
+
+    return _BRAND_PATTERN.sub(swap, subject), found
+
 
 class ImageError(RuntimeError):
     """Image generation failed. The caller falls back to a typographic card."""
@@ -110,6 +160,7 @@ def build_prompt(visual_request: str, narration: str = "", variation: int = 0) -
     subject = " ".join((visual_request or narration or "").split())
     # Numbers belong in the overlay, not in the photograph.
     subject = re.sub(r"\d+[\d.,]*\s*%?", "", subject).strip(" ,.–-")
+    subject, brands = strip_brands(subject)
 
     parts = [_STYLE]
     if _wants_a_screen(visual_request or ""):
@@ -121,6 +172,11 @@ def build_prompt(visual_request: str, narration: str = "", variation: int = 0) -
     if variation:
         parts.append(SHOT_VARIATIONS[variation % len(SHOT_VARIATIONS)])
     parts.append(_BAN)
+    if brands:
+        # Naming what must not be drawn beats hoping the generic ban covers it.
+        parts.append(
+            f"Ninguna aplicación reconocible: nada de {', '.join(brands)}, "
+            f"ni sus logotipos, ni sus colores, ni sus interfaces.")
     return " ".join(parts)
 
 

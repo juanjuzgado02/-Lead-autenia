@@ -20,6 +20,16 @@ from core_config import settings as autenia
 from core_config import validate_startup
 from autenia import cycle, store, telegram, voice
 
+# Windows consoles still default to cp1252, which cannot encode a single one of
+# the emoji this bot prints — and the first thing it prints once publishing is
+# armed is "⚠️ AUTENIA_PUBLISH_DRY_RUN is off". Without this the process dies on
+# that line, so turning real publishing on is exactly what stops the bot from
+# starting. `errors="replace"` rather than a hard UTF-8 switch: a terminal that
+# cannot draw a character should show a box, never take the bot down.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 async def run_cycle_once() -> None:
     await store.init_db()

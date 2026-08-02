@@ -233,7 +233,8 @@ def _estimated_seconds(segment: Segment) -> float:
     """Length from the word count, since the voice has not spoken yet."""
     if segment.duration_s:
         return segment.duration_s
-    return max(0.8, len(re.findall(r"\S+", segment.text)) / 2.6)
+    return max(0.8, len(re.findall(r"\S+", segment.text))
+               / voice.words_per_second())
 
 
 def _shot_count(duration: float, max_shot_s: float) -> int:
@@ -254,7 +255,7 @@ def _shots_wanted(text: str, fmt: Format | None = None) -> int:
     fast formats reuse framings rather than buying more.
     """
     fmt = fmt or formats.DEFAULT
-    seconds = len(re.findall(r"\S+", text)) / 2.6
+    seconds = len(re.findall(r"\S+", text)) / voice.words_per_second()
     return max(1, min(4, _shot_count(seconds, fmt.max_shot_s)))
 
 

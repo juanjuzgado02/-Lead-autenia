@@ -18,7 +18,7 @@ def default_limits(monkeypatch):
 
 def narration_of(seconds):
     """Narration that estimates to roughly ``seconds``."""
-    words = int(seconds * preflight.WORDS_PER_SECOND)
+    words = int(seconds * preflight.words_per_second())
     return " ".join(["palabra"] * words)
 
 

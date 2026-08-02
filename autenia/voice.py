@@ -138,6 +138,31 @@ AUDITION_TEXT = (
 #: Used only to estimate before spending; the real figure settles afterwards.
 ELEVENLABS_CENTS_PER_1K_CHARS = 3
 
+#: A qué ritmo lee cada proveedor, en palabras por segundo. **Medido, no
+#: supuesto**: el 2 de agosto de 2026, sobre los seis vídeos ya renderizados con
+#: Gemini (2,21 a 2,81; media 2,49) y sobre el primer guion locutado con
+#: Cadalso (2,06).
+#:
+#: Antes había un único 2,6 escrito en tres sitios, y erraba hacia el lado malo:
+#: el preflight estima segundos dividiendo por este número, así que un ritmo
+#: demasiado alto hace que un guion largo parezca corto y pase un límite que
+#: existe para pararlo. Se elige por debajo de la media de cada proveedor por el
+#: mismo motivo que ``estimate_cents`` redondea hacia arriba: una estimación
+#: optimista es un freno que no frena.
+PALABRAS_POR_SEGUNDO = {"gemini": 2.4, "elevenlabs": 2.05}
+
+#: El de por defecto cuando no se sabe qué proveedor habla.
+PALABRAS_POR_SEGUNDO_DEFECTO = 2.4
+
+
+def words_per_second(provider: str | None = None) -> float:
+    """Palabras por segundo del proveedor que vaya a hablar."""
+    try:
+        chosen = provider or autenia.voice_provider
+    except Exception:  # noqa: BLE001 - un .env roto no debe romper una estimación
+        chosen = "gemini"
+    return PALABRAS_POR_SEGUNDO.get(chosen, PALABRAS_POR_SEGUNDO_DEFECTO)
+
 
 class VoiceError(RuntimeError):
     """Speech synthesis failed. Message is safe to log."""

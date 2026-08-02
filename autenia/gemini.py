@@ -348,10 +348,17 @@ _SCRIPT_SCHEMA = {
 }
 
 
-#: Spoken pace used to turn a target duration into a word budget. Models judge
-#: word counts far better than they judge how long something takes to say, so
-#: the prompt asks for words and preflight checks the seconds.
-WORDS_PER_SECOND = 2.6
+def _words_per_second() -> float:
+    """El ritmo del proveedor que vaya a locutar.
+
+    Import local porque ``voice`` importa este módulo: al revés sería circular.
+
+    Se le piden palabras al modelo y no segundos porque cuenta palabras bien y
+    estima segundos mal; el ritmo es lo que traduce entre las dos cosas, y no es
+    el mismo con Gemini que con ElevenLabs.
+    """
+    from . import voice  # noqa: PLC0415
+    return voice.words_per_second()
 
 
 async def write_script(candidate, *, seconds: int = 30) -> tuple[dict, Usage]:
@@ -361,7 +368,7 @@ async def write_script(candidate, *, seconds: int = 30) -> tuple[dict, Usage]:
     opinion. That distinction is what lets preflight refuse a claim nobody can
     back up, instead of discovering it after publication.
     """
-    budget = int(seconds * WORDS_PER_SECOND)
+    budget = int(seconds * _words_per_second())
     lower, upper = int(budget * 0.85), int(budget * 1.05)
     facts = "\n".join(f"- {fact}" for fact in candidate.facts) or "- (ninguno)"
     prompt = (
@@ -394,7 +401,7 @@ async def write_brief_script(brief: str, *, seconds: int = 30) -> tuple[dict, Us
     that, everything is an opinion, which is exactly what preflight will let
     through and what an honest video can claim.
     """
-    budget = int(seconds * WORDS_PER_SECOND)
+    budget = int(seconds * _words_per_second())
     lower, upper = int(budget * 0.85), int(budget * 1.05)
     return await json_call(
         f"Escribe el guion de un vídeo de unos {seconds} segundos sobre esto, "

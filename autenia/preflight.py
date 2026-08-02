@@ -16,9 +16,12 @@ from dataclasses import dataclass, field
 
 from core_config import settings as autenia
 
-#: Spanish is read at roughly this pace in a short-form voiceover. Used to
-#: estimate duration from the script before a single second is synthesised.
-WORDS_PER_SECOND = 2.6
+#: El ritmo lo pone el proveedor que vaya a locutar, no una constante: Gemini y
+#: ElevenLabs no leen a la misma velocidad, y este módulo estima segundos
+#: dividiendo por ese número para decidir si un guion cabe.
+def words_per_second(provider: str | None = None) -> float:
+    from . import voice  # noqa: PLC0415 (voice importa gemini; sería circular)
+    return voice.words_per_second(provider)
 
 #: The brief's window. Outside it the piece is either rushed or padded.
 MIN_SECONDS = 20
@@ -116,9 +119,9 @@ def _says_its_source(narration: str, source: str) -> bool:
     return bool(_ATTRIBUTION.search(narration))
 
 
-def estimate_seconds(text: str) -> float:
+def estimate_seconds(text: str, provider: str | None = None) -> float:
     words = len(re.findall(r"\S+", text))
-    return words / WORDS_PER_SECOND if words else 0.0
+    return words / words_per_second(provider) if words else 0.0
 
 
 def check(script: dict, *, narration: str, estimated_cents: int = 0,

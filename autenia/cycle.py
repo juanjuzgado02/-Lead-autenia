@@ -179,6 +179,13 @@ async def _approve(action: telegram.Action) -> None:
         script = json.loads(fresh.script)
         version_id = fresh.id
 
+    # Un mensaje y no sólo el aviso del botón: el aviso se desvanece en dos
+    # segundos y el render tarda minutos, así que quien aprueba se queda mirando
+    # un chat en el que no ha pasado nada y vuelve a pulsar.
+    await telegram.send_message(
+        "🎬 <b>Renderizando.</b> Tarda unos minutos.\n"
+        "<i>No hace falta que vuelvas a darle: te llega el vídeo aquí en cuanto "
+        "esté.</i>")
     await _render_and_publish(version_id, script)
 
 
@@ -322,9 +329,13 @@ async def _repair_video(action: telegram.Action) -> None:
 
     await telegram.send_message(
         f"🔧 Anotado: «{telegram.escape(defecto[:120])}».\n"
-        f"<i>Es la {arreglo_.capa}. Compro eso y lo monto otra vez.</i>")
+        + ("<i>Eso se arregla montando otra vez. No cuesta nada.</i>"
+           if arreglo_.gratis
+           else f"<i>Es la {arreglo_.capa}. Compro eso y lo monto otra vez.</i>"))
 
     fmt = formats.current()
+    if arreglo_.capa == arreglo.SUBTITULOS:
+        fmt = formats.sin_subtitulos(fmt)
     out_path = os.path.join(workdir, "short.mp4")
     # Se monta al lado y se sustituye al final. Un arreglo que se cae a medias
     # no puede llevarse por delante el vídeo que había, que era publicable.

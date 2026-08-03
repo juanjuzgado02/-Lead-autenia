@@ -13,7 +13,7 @@ entrada a :data:`PRESETS`, no tocar el renderizador.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,13 @@ class Format:
     #: "placa"    — la frase entera, abajo, sobre una placa oscura
     #: "grupos"   — tres o cuatro palabras cada vez, sincronizadas con la voz
     #: "kinetico" — lo mismo pero grande y en el centro, sin placa
+    #: "ninguno"  — sin subtítulo
+    #:
+    #: "ninguno" no es un montaje que se elija por gusto, es una salida. Un
+    #: subtítulo que va por delante de lo que se está diciendo es peor que no
+    #: tenerlo: el ojo lee antes de que la voz llegue y el vídeo se lee como
+    #: roto. Mientras el reparto de la voz no sea de fiar, poder quitarlos
+    #: convierte un vídeo tirado en un vídeo publicable sin pagar nada.
     caption: str = "placa"
 
     caption_size: int = 44
@@ -194,6 +201,23 @@ def get(name: str | None) -> Format:
             f"{', '.join(sorted(PRESETS))}") from None
 
 
+def sin_subtitulos(fmt: Format) -> Format:
+    """El mismo montaje, mudo de texto. No toca nada más.
+
+    Un formato es inmutable a propósito —es datos— así que esto devuelve otro,
+    igual salvo el subtítulo. Todo lo demás (el ritmo del corte, la cámara, la
+    tarjeta del gancho, la marca) se conserva, porque quitar el subtítulo es
+    quitar el subtítulo y no cambiar de montaje.
+    """
+    return replace(fmt, caption="ninguno")
+
+
+def subtitulos_activos() -> bool:
+    """Si el ciclo diario pone subtítulos. Apagarlos es una decisión de Juan."""
+    return (os.environ.get("AUTENIA_SUBTITULOS", "on").strip().lower()
+            not in ("0", "false", "no", "off"))
+
+
 def current() -> Format:
     """El montaje que usa el ciclo diario.
 
@@ -201,6 +225,10 @@ def current() -> Format:
     entorno: se cambia sin tocar nada y sin desplegar. Un nombre que no existe
     cae al de por defecto en vez de tumbar el ciclo — quedarse sin vídeo por una
     errata en el montaje sería el peor cambio posible por el menor motivo.
+
+    ``AUTENIA_SUBTITULOS=off`` los quita de cualquiera de los cinco, sin tener
+    que duplicar los cinco presets para tener las dos variantes.
     """
     name = os.environ.get("AUTENIA_FORMATO", "").strip().lower()
-    return PRESETS.get(name, DEFAULT)
+    fmt = PRESETS.get(name, DEFAULT)
+    return fmt if subtitulos_activos() else sin_subtitulos(fmt)

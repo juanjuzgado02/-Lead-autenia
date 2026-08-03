@@ -31,16 +31,33 @@ from . import clips, images, render, revision, voice
 from .formats import Format
 from .gemini import TEXT_MODEL, GeminiError, request
 
-#: Las tres cosas que puede tener un vídeo mal, y lo que cuesta arreglarlas.
-VOZ = "voz"          # una locución nueva
-PLANO = "plano"      # un clip o una foto, de una escena
-GUION = "guion"      # las palabras: no se arregla aquí, vuelve a revisión
+#: Lo que puede tener un vídeo mal, y lo que cuesta arreglarlo.
+#:
+#: Los dos primeros no cuestan **nada**: la voz ya está comprada y el metraje
+#: también, y lo único que cambia es cómo se reparte o qué se dibuja encima. Son
+#: los primeros de la lista a propósito, porque son la respuesta a la mitad de
+#: los defectos que se ven en un vídeo terminado.
+RECORTE = "recorte"        # repartir otra vez la misma toma: gratis
+SUBTITULOS = "subtitulos"  # montar sin subtítulo: gratis
+VOZ = "voz"                # una locución nueva: céntimos
+PLANO = "plano"            # un clip o una foto, de una escena
+GUION = "guion"            # las palabras: no se arregla aquí, vuelve a revisión
+
+#: Las que se arreglan volviendo a montar, de la más barata a la más cara. El
+#: orden importa: ante la duda entre dos, la buena es la de arriba.
+REPARABLES = (RECORTE, SUBTITULOS, VOZ, PLANO)
 
 _SISTEMA = """\
 Clasificas el defecto que una persona ha visto en un vídeo ya terminado, para
-decidir qué hay que volver a comprar. Cada capa cuesta un dinero distinto, así
-que acertar importa.
+decidir qué hay que volver a comprar. Cada capa cuesta un dinero distinto y las
+dos primeras no cuestan nada, así que acertar importa mucho.
 
+- "recorte": el SUBTÍTULO Y LA VOZ NO VAN JUNTOS. El texto va por delante o por
+  detrás de lo que se dice, cambia a destiempo, se adelanta, va descuadrado,
+  descoordinado o desincronizado. La voz está bien y el texto está bien: lo que
+  está mal es dónde se parte. Gratis.
+- "subtitulos": quitar el subtítulo. Lo pide explícitamente ("quita los
+  subtítulos", "sin texto", "mejor sin letras"). Gratis.
 - "voz": lo que se OYE. Repite una palabra, se come una palabra o una frase,
   tartamudea, pronuncia mal, lee raro, va muy rápido o muy lento, suena mal.
 - "plano": lo que se VE en una escena concreta. Manos o cuerpos deformes, caras
@@ -50,17 +67,24 @@ que acertar importa.
   fuente que no dice eso, un gancho que no funciona, algo que no se debería
   decir. Es lo único que obliga a reescribir.
 
-En la duda entre "plano" y "guion": si la frase está bien dicha y lo que falla
-es lo que se ve mientras se dice, es "plano".
+Reglas para las dudas:
+- Entre "recorte" y "voz": si se queja de CUÁNDO aparece el texto, es "recorte";
+  si se queja de CÓMO suena la voz, es "voz". Un subtítulo desincronizado es
+  "recorte" aunque la persona lo describa hablando de la voz.
+- Entre "plano" y "guion": si la frase está bien dicha y lo que falla es lo que
+  se ve mientras se dice, es "plano".
+- Si pide las dos cosas ("sigue mal, quita los subtítulos"), manda lo que pide
+  hacer: "subtitulos".
 
 "escena" es el número que se te da, o null si el defecto es de todo el vídeo o
-no se sabe de cuál. Para "voz" casi siempre es null: la locución es una sola.\
+no se sabe de cuál. Para "recorte", "subtitulos" y "voz" es siempre null.\
 """
 
 _ESQUEMA = {
     "type": "object",
     "properties": {
-        "capa": {"type": "string", "enum": [VOZ, PLANO, GUION]},
+        "capa": {"type": "string",
+                 "enum": [RECORTE, SUBTITULOS, VOZ, PLANO, GUION]},
         "escena": {"type": "integer", "nullable": True},
         "motivo": {"type": "string"},
     },
@@ -79,7 +103,12 @@ class Arreglo:
     @property
     def se_puede(self) -> bool:
         """Si esto se arregla montando otra vez o hay que reescribir."""
-        return self.capa in (VOZ, PLANO)
+        return self.capa in REPARABLES
+
+    @property
+    def gratis(self) -> bool:
+        """Si arreglarlo no llama a ningún proveedor."""
+        return self.capa in (RECORTE, SUBTITULOS)
 
 
 def _escenas(segmentos: list[render.Segment]) -> str:
@@ -125,7 +154,7 @@ async def clasificar(defecto: str, segmentos: list[render.Segment]) -> Arreglo:
         return Arreglo(capa=GUION, motivo=defecto[:200])
 
     capa = str(datos.get("capa") or GUION)
-    if capa not in (VOZ, PLANO, GUION):
+    if capa not in (*REPARABLES, GUION):
         capa = GUION
 
     escena = datos.get("escena")
@@ -193,6 +222,19 @@ async def aplicar(arreglo: Arreglo, segmentos: list[render.Segment], *,
 
     No monta: eso lo hace quien llama, con ``render.compose``, que es gratis.
     """
+    if arreglo.capa == SUBTITULOS:
+        # No hay nada que comprar ni que recortar: el subtítulo se dibuja al
+        # montar, así que quitarlo es montar con otro formato. Lo hace quien
+        # llama, con ``formats.sin_subtitulos``.
+        return "montado sin subtítulos"
+
+    if arreglo.capa == RECORTE:
+        # La toma es buena y el texto es bueno; lo que estaba mal era dónde se
+        # partía. Repartirla otra vez no llama a nadie.
+        render.recut(segmentos, workdir)
+        render.save_plan(segmentos, workdir)
+        return "voz repartida otra vez"
+
     if arreglo.capa == VOZ:
         # El guion está congelado —lo aprobó una persona— así que se pide la
         # misma frase otra vez. Es la toma la que salió mal, no el texto, y una

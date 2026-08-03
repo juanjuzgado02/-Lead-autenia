@@ -394,6 +394,9 @@ async def poll(handler: Callable[[Action], Awaitable[None]], *,
     autenia.require("review")
     offset = None
     halt = stop or asyncio.Event()
+    # asyncio sólo guarda una referencia débil a las tareas en marcha: sin este
+    # conjunto, un render largo puede ser recogido por el basurero a la mitad.
+    en_curso: set[asyncio.Task] = set()
 
     while not halt.is_set():
         try:
@@ -414,11 +417,34 @@ async def poll(handler: Callable[[Action], Awaitable[None]], *,
             action = parse_update(update, awaiting=awaiting())
             if action is None:
                 continue
-            try:
-                await handler(action)
-            except Exception as exc:  # noqa: BLE001 - one bad action must not
-                # take the bot down; the operator would have no way to tell.
-                await send_message(f"⚠️ Error procesando la acción: {exc}")
+            # En marcha, no en espera. Aprobar un guion renderiza, y renderizar
+            # tarda minutos: esperarlo aquí dejaba al bot sin preguntar a
+            # Telegram todo ese rato. Nada de lo que pulsara el operador hacía
+            # nada visible, así que volvía a pulsar — y cuando el render
+            # terminaba, todas esas pulsaciones se procesaban de golpe contra
+            # una versión que ya había cambiado de estado y contestaban "eso ya
+            # estaba resuelto". El bot parecía necesitar tres toques y lo que
+            # necesitaba era no estar ocupado.
+            #
+            # Dos acciones a la vez no se pisan: quien decide eso es la máquina
+            # de estados, que sólo deja una versión gastando por contenido y
+            # rechaza el segundo intento en vez de pagarlo dos veces.
+            tarea = asyncio.create_task(_atender(handler, action))
+            en_curso.add(tarea)
+            tarea.add_done_callback(en_curso.discard)
+
+
+async def _atender(handler: Callable[[Action], Awaitable[None]],
+                   action: Action) -> None:
+    """Una acción, con sus fallos contados en el chat y no en el vacío."""
+    try:
+        await handler(action)
+    except Exception as exc:  # noqa: BLE001 - one bad action must not take the
+        # bot down; the operator would have no way to tell.
+        try:
+            await send_message(f"⚠️ Error procesando la acción: {exc}")
+        except Exception:  # noqa: BLE001 - sin chat no hay nada que hacer
+            print(f"[telegram] acción fallida sin poder avisar: {exc}")
 
 
 async def resolve_chat_id() -> list[dict]:

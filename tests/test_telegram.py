@@ -268,3 +268,79 @@ def test_idle_text_is_answered_not_swallowed():
 def test_idle_text_from_any_other_chat_is_still_ignored():
     """Contestar a un desconocido confirma que el bot existe."""
     assert parse_update(message("hola", chat_id=STRANGER), awaiting=[]) is None
+
+
+# -- el bot no se queda sordo mientras trabaja -----------------------------
+
+@pytest.mark.asyncio
+async def test_a_long_action_does_not_stop_the_bot_from_listening(monkeypatch):
+    """Aprobar renderiza, y renderizar tarda minutos.
+
+    Esperando la acción dentro del bucle, el bot dejaba de preguntar a Telegram
+    todo ese rato: nada de lo que pulsara el operador hacía nada visible, así
+    que volvía a pulsar, y al terminar el render se procesaban todas las
+    pulsaciones de golpe contra una versión ya resuelta. Parecía que hacían
+    falta tres toques; lo que hacía falta era un bot que no estuviera ocupado.
+    """
+    import asyncio
+
+    trabajando = asyncio.Event()
+    suelta = asyncio.Event()
+    consultas = []
+    parar = asyncio.Event()
+
+    async def falso_call(method, params, timeout=None):
+        consultas.append(method)
+        if method != "getUpdates":
+            return {}
+        if len(consultas) == 1:
+            return [{"update_id": 1, **callback("aprobar:v1")}]
+        if len(consultas) >= 4:
+            parar.set()
+        return []
+
+    async def handler(action):
+        trabajando.set()
+        await suelta.wait()          # una acción que no termina nunca
+
+    monkeypatch.setattr(telegram, "_call", falso_call)
+
+    bucle = asyncio.create_task(
+        telegram.poll(handler, awaiting=set, stop=parar))
+    await asyncio.wait_for(trabajando.wait(), timeout=2)
+    await asyncio.wait_for(bucle, timeout=5)
+
+    # Siguió preguntando con la acción todavía en marcha.
+    assert len(consultas) >= 4
+    assert not suelta.is_set()
+    suelta.set()
+
+
+@pytest.mark.asyncio
+async def test_an_action_that_explodes_is_reported_not_swallowed(monkeypatch):
+    import asyncio
+
+    avisos = []
+    parar = asyncio.Event()
+    consultas = []
+
+    async def falso_call(method, params, timeout=None):
+        consultas.append(method)
+        if len(consultas) == 1:
+            return [{"update_id": 1, **callback("aprobar:v1")}]
+        if len(consultas) >= 3:
+            parar.set()
+        return []
+
+    async def handler(action):
+        raise RuntimeError("se rompió")
+
+    monkeypatch.setattr(telegram, "_call", falso_call)
+    monkeypatch.setattr(telegram, "send_message",
+                        lambda texto: avisos.append(texto) or asyncio.sleep(0))
+
+    await asyncio.wait_for(
+        telegram.poll(handler, awaiting=set, stop=parar), timeout=5)
+    await asyncio.sleep(0)  # que la tarea de la acción llegue a terminar
+
+    assert avisos and "se rompió" in avisos[0]

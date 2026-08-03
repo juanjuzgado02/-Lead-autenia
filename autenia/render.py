@@ -362,6 +362,8 @@ def _caption_chunks(text: str, duration: float,
     every short on the feed does it — and it is free, because the timing comes
     from word counts inside a segment whose real length is already known.
     """
+    if fmt.caption == "ninguno":
+        return []
     if fmt.caption == "placa":
         return [(text, 0.0, duration)]
 
@@ -664,6 +666,20 @@ def _silences(path: str, *, threshold_db: int = -34,
 #: son el mismo silencio contado dos veces, y dejarían una escena muda.
 MIN_SEGMENT_S = 0.35
 
+#: Cuánto vale un segundo de pausa frente a un segundo de desviación al elegir
+#: dónde cortar. **Una pausa larga es un final de frase; una corta es una
+#: respiración**, y sin esto el reparto no distingue: elige la que caiga más
+#: cerca de su estimación aunque sea el hueco que deja la voz a mitad de
+#: oración.
+#:
+#: Medido sobre dos locuciones reales el 3 de agosto de 2026. En la del día 2
+#: daba igual —las cuatro pausas buenas eran también las más cercanas— pero en
+#: la del día 3 el reparto sin este peso eligió tres respiraciones de 0,31 a
+#: 0,41 s y se dejó los finales de frase de 0,59 a 0,97 s, porque la respuesta
+#: mala ganaba por 0,8 s de desviación total. A partir de 2 las dos salen bien
+#: y siguen saliendo bien hasta 5; 2,5 es el centro de ese margen.
+PESO_PAUSA = 2.5
+
 
 def _split_points(total_s: float, segments: list[Segment],
                   silences: list[tuple[float, float]]) -> list[float]:
@@ -706,7 +722,7 @@ def _split_points(total_s: float, segments: list[Segment],
         return []
 
     pausas = sorted(
-        medio for inicio, fin in silences
+        (medio, fin - inicio) for inicio, fin in silences
         if MIN_SEGMENT_S < (medio := (inicio + fin) / 2) < total_s - MIN_SEGMENT_S)
 
     elegidas = _assign_pauses(esperados, pausas)
@@ -714,8 +730,13 @@ def _split_points(total_s: float, segments: list[Segment],
 
 
 def _assign_pauses(esperados: list[float],
-                   pausas: list[float]) -> list[float] | None:
-    """Una pausa por frontera, crecientes, con la desviación total más pequeña.
+                   pausas: list[tuple[float, float]]) -> list[float] | None:
+    """Una pausa por frontera, crecientes, con el coste total más bajo.
+
+    ``pausas`` son ``(centro, duración)``. El coste de darle una pausa a una
+    frontera es lo que se aparta del reparto por palabras **menos** lo que dura
+    la pausa, pesada por :data:`PESO_PAUSA`: entre dos huecos parecidos gana el
+    largo, que es el que separa dos frases.
 
     ``None`` cuando no hay pausas suficientes para dárselas a todas: media
     asignación es peor que ninguna, porque mezclar cortes reales con estimados
@@ -725,21 +746,25 @@ def _assign_pauses(esperados: list[float],
     if m < n:
         return None
 
+    def coste_de(i: int, j: int) -> float:
+        centro, duracion = pausas[j]
+        return abs(centro - esperados[i]) - PESO_PAUSA * duracion
+
     INFINITO = float("inf")
     coste = [[INFINITO] * m for _ in range(n)]
     desde = [[-1] * m for _ in range(n)]
 
     for j in range(m):
-        coste[0][j] = abs(pausas[j] - esperados[0])
+        coste[0][j] = coste_de(0, j)
 
     for i in range(1, n):
         for j in range(i, m):
             for k in range(j):
                 if coste[i - 1][k] == INFINITO:
                     continue
-                if pausas[j] - pausas[k] < MIN_SEGMENT_S:
+                if pausas[j][0] - pausas[k][0] < MIN_SEGMENT_S:
                     continue
-                candidato = coste[i - 1][k] + abs(pausas[j] - esperados[i])
+                candidato = coste[i - 1][k] + coste_de(i, j)
                 if candidato < coste[i][j]:
                     coste[i][j], desde[i][j] = candidato, k
 
@@ -750,7 +775,7 @@ def _assign_pauses(esperados: list[float],
     elegidas = [0.0] * n
     j = final
     for i in range(n - 1, -1, -1):
-        elegidas[i] = pausas[j]
+        elegidas[i] = pausas[j][0]
         j = desde[i][j]
     return elegidas
 

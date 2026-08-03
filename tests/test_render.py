@@ -442,3 +442,58 @@ def test_a_pause_that_fits_the_estimate_is_used():
     segmentos = _segmentos(["Uno dos.", "Tres cuatro."])
     puntos = render._split_points(12.0, segmentos, [(6.4, 7.0)])
     assert puntos == [6.7]
+
+
+#: Los silencios de la locución del 3 de agosto de 2026. Cinco frases de diez u
+#: once palabras, y nueve pausas: cuatro finales de frase (0,59 a 0,97 s) y
+#: cinco respiraciones de dentro de una frase (0,31 a 0,41 s).
+SILENCIOS_RESPIRADOS = [
+    (2.127, 2.512), (4.490, 5.279), (7.119, 7.532), (9.581, 10.201),
+    (11.564, 11.875), (13.525, 14.498), (16.386, 16.722), (18.148, 18.733),
+    (21.317, 21.687),
+]
+TOTAL_RESPIRADO = 21.687
+GUION_RESPIRADO = [
+    "Una frase que ocupa exactamente diez palabras contadas de esta manera.",
+    "Otra frase distinta que ocupa once palabras contadas de esta misma manera.",
+    "Tercera frase distinta que ocupa once palabras contadas de esta misma manera.",
+    "Cuarta frase distinta que ocupa once palabras contadas de esta misma manera.",
+    "Quinta frase distinta que ocupa once palabras contadas de esta misma manera.",
+]
+
+
+def test_a_breath_does_not_beat_the_end_of_a_sentence():
+    """El segundo vídeo que salió descuadrado, y por otro motivo que el primero.
+
+    Repartir mirando todas las fronteras a la vez no basta si lo único que se
+    mide es la distancia a la estimación: aquí las tres respiraciones de 0,31 a
+    0,41 s caían más cerca del reparto por palabras que los finales de frase de
+    0,59 a 0,97 s, y ganaban por 0,8 s de desviación total. Una pausa larga es
+    un final de frase; una corta es que el locutor ha cogido aire.
+    """
+    puntos = render._split_points(TOTAL_RESPIRADO, _segmentos(GUION_RESPIRADO),
+                                  SILENCIOS_RESPIRADOS)
+    assert puntos == pytest.approx([4.884, 9.891, 14.011, 18.440], abs=0.002)
+
+
+def test_the_longest_pauses_are_the_ones_chosen():
+    """Dicho al revés, que es como se comprueba de un vistazo."""
+    puntos = render._split_points(TOTAL_RESPIRADO, _segmentos(GUION_RESPIRADO),
+                                  SILENCIOS_RESPIRADOS)
+    duraciones = {round((a + b) / 2, 3): b - a for a, b in SILENCIOS_RESPIRADOS}
+    assert all(duraciones[round(p, 3)] >= 0.5 for p in puntos)
+
+
+def test_being_near_the_estimate_still_counts():
+    """El peso de la pausa inclina, no manda: una pausa larguísima pero en el
+    sitio equivocado no puede llevarse una frontera que no le toca."""
+    segmentos = _segmentos(["Uno dos.", "Tres cuatro."])
+    # Una pausa enorme al principio y una normal donde toca partir.
+    puntos = render._split_points(12.0, segmentos, [(0.6, 2.4), (5.9, 6.4)])
+    assert puntos == [6.15]
+
+
+def test_no_caption_means_no_caption():
+    """La escena se monta igual; simplemente no se dibuja nada encima."""
+    mudo = formats.sin_subtitulos(formats.CONTINUO)
+    assert render._caption_chunks("Una frase entera.", 4.0, mudo) == []

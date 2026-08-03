@@ -50,3 +50,35 @@ def test_type_without_a_plate_is_the_only_place_the_display_face_is_used():
         if fmt.plate_alpha == 0:
             assert fmt.caption == "kinetico"
             assert fmt.caption_size >= 70
+
+
+# -- quitar el subtítulo ---------------------------------------------------
+#
+# Un subtítulo que va por delante de lo que se dice es peor que no tenerlo: el
+# ojo lee antes de que llegue la voz. Poder quitarlo convierte un vídeo que se
+# iba a tirar en uno publicable sin pagar nada.
+
+def test_taking_the_subtitle_off_changes_only_the_subtitle():
+    for original in formats.PRESETS.values():
+        mudo = formats.sin_subtitulos(original)
+        assert mudo.caption == "ninguno"
+        # Todo lo demás es el mismo montaje: ritmo, cámara, marca, gancho.
+        assert mudo.name == original.name
+        assert mudo.max_shot_s == original.max_shot_s
+        assert mudo.punch == original.punch
+        assert mudo.hook_card == original.hook_card
+        assert mudo.brand == original.brand
+
+
+def test_the_env_takes_them_off_any_preset(monkeypatch):
+    monkeypatch.setenv("AUTENIA_SUBTITULOS", "off")
+    for nombre in formats.PRESETS:
+        monkeypatch.setenv("AUTENIA_FORMATO", nombre)
+        assert formats.current().caption == "ninguno"
+
+
+def test_subtitles_are_on_unless_somebody_says_otherwise(monkeypatch):
+    monkeypatch.delenv("AUTENIA_SUBTITULOS", raising=False)
+    monkeypatch.delenv("AUTENIA_FORMATO", raising=False)
+    assert formats.current().caption != "ninguno"
+    assert formats.subtitulos_activos()

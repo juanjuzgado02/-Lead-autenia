@@ -231,3 +231,46 @@ async def test_a_script_defect_refuses_to_pretend(tmp_path, guion_montado,
     with pytest.raises(ValueError):
         await arreglo.aplicar(Arreglo(capa=GUION), guion_montado,
                               workdir=str(tmp_path), script={}, fmt=None)
+
+
+# -- los dos arreglos que no cuestan nada ----------------------------------
+#
+# La mitad de los defectos de un vídeo terminado no son material malo: son la
+# voz mal repartida o un subtítulo que sobra. Los dos se arreglan montando otra
+# vez, y montar no llama a nadie. Si esto se rompe, el operador vuelve a pagar
+# un vídeo entero por un fallo que no costaba un céntimo.
+
+def test_the_free_repairs_say_they_are_free():
+    assert Arreglo(capa=arreglo.RECORTE).gratis
+    assert Arreglo(capa=arreglo.SUBTITULOS).gratis
+    assert not Arreglo(capa=VOZ).gratis
+    assert not Arreglo(capa=PLANO, escena=0).gratis
+    assert all(Arreglo(capa=c).se_puede for c in arreglo.REPARABLES)
+
+
+@pytest.mark.asyncio
+async def test_taking_the_subtitles_off_buys_nothing(tmp_path, guion_montado,
+                                                     sin_comprar):
+    """Quitar el subtítulo es montar con otro formato, y montar es gratis."""
+    hecho = await arreglo.aplicar(
+        Arreglo(capa=arreglo.SUBTITULOS), guion_montado,
+        workdir=str(tmp_path), script={}, fmt=None)
+    assert "sin subtítulos" in hecho
+    # Ni la voz ni los planos se tocan: el vídeo es el mismo, sin letras.
+    assert guion_montado[1].clip_path == "data/cache/clips/aaa.mp4"
+
+
+@pytest.mark.asyncio
+async def test_recutting_reuses_the_take_it_already_paid_for(
+        monkeypatch, tmp_path, guion_montado, sin_comprar):
+    """El subtítulo desincronizado no es una voz mala: es una voz mal partida."""
+    recortadas = []
+    monkeypatch.setattr(render, "recut",
+                        lambda segs, wd, **kw: recortadas.append(len(segs)))
+
+    hecho = await arreglo.aplicar(
+        Arreglo(capa=arreglo.RECORTE), guion_montado,
+        workdir=str(tmp_path), script={}, fmt=None)
+
+    assert recortadas == [3]
+    assert "repartida" in hecho

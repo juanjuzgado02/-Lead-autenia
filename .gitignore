@@ -1,0 +1,58 @@
+# Video files
+*.mp4
+*.webm
+*.mov
+*.mkv
+
+# YOLO model
+*.pt
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Temporary files / runtime dirs
+temp_*
+uploads/
+downloads/
+videos/
+output/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+.env
+
+# Generated metadata
+*_metadata.json
+
+# Cache dirs
+.cache/
+.config/
+# Multi-agent Skills
+.agents/
+.agent/
+.claude/*
+skills/
+skills-lock.json
+# ...except the Autenia project skill, which documents this repo and is versioned
+# with it. Local machine settings (.claude/settings.local.json) stay ignored.
+!.claude/skills/
+
+
+# Cloud env example kept local only (avoid leaking infra hints)
+.env.cloud.example
+
+# Autenia runtime state (SQLite, renders, biblioteca visual)
+data/
+GUIA-DEL-REPOSITORIO.docx
+
+# Imágenes generadas (caché). Se regeneran pagando.
+data/cache/
+
+# Ficheros de bloqueo de Word: aparecen al abrir la guía y no son nada.
+~$*

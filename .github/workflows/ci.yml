@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # requirements.txt is now small enough to install whole: the heavy
+      # computer-vision stack went with the clipping pipeline it served.
+      # pytest-asyncio is the only extra the tests themselves need.
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Run tests
+        run: pytest tests/ -v
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The bot image is the deployment artefact. Building it in CI is what
+      # catches a missing file in the COPY list before the VPS does.
+      - name: Build the bot image
+        run: docker build -f Dockerfile.bot -t autenia-bot:ci .
+      - name: Check the compose file resolves
+        run: docker compose config --quiet

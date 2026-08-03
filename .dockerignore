@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.py[cod]
+.Python
+.venv
+venv/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Runtime state: the database, the renders and the footage library are mounted
+# as a volume. Baking them into the image would ship drafts nobody approved.
+data/
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.gif
+
+# Secrets — never bake real credentials into the image. Runtime env comes via
+# compose env_file.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Docker
+Dockerfile*
+docker-compose.yml
+.dockerignore
+
+# Docs and tests: not needed at runtime.
+*.md
+*.docx
+tests/

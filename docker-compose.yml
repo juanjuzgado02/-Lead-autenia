@@ -1,0 +1,18 @@
+# One service, because there is one thing to run.
+#
+# The stack used to be three containers: a FastAPI backend, a React dashboard
+# and a Remotion renderer. The review surface is Telegram now, so the dashboard
+# had no user; the render is ffmpeg, so the renderer had no consumer.
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: autenia-bot
+    env_file: .env
+    volumes:
+      # The database, the renders and the footage library. Everything the bot
+      # would be sad to lose lives here and nowhere else.
+      - ./data:/data
+    restart: unless-stopped
+    # Long polling: no ports published, nothing reachable from outside.

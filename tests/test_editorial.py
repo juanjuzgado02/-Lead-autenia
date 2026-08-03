@@ -1,0 +1,298 @@
+"""Editorial filters and scoring.
+
+The brief's §6 exclusions each get a test, because each one is a way of
+publishing something Autenia would have to take down.
+"""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from autenia.editorial import (
+    MAX_AGE_DAYS, MIN_SCORE, Candidate, _freshness, hard_rejections, pick,
+    rank, score, survives,
+)
+
+NOW = datetime(2026, 7, 29, 10, 0, tzinfo=timezone.utc)
+
+
+def make(title, *, summary="", facts=("un dato con fuente",), age_days=0, **kwargs):
+    return Candidate(
+        title=title,
+        url=kwargs.pop("url", f"https://example.com/{abs(hash(title))}"),
+        publisher=kwargs.pop("publisher", "Ejemplo"),
+        published_at=NOW - timedelta(days=age_days),
+        fetched_at=NOW,
+        facts=list(facts),
+        summary=summary,
+        **kwargs,
+    )
+
+
+def rules(candidate):
+    return {rejection.rule for rejection in hard_rejections(candidate)}
+
+
+# -- one test per hard exclusion -------------------------------------------
+
+def test_politics_is_excluded():
+    c = make("El Gobierno aprueba una ley de automatización para pymes")
+    assert "politica" in rules(c)
+    assert not survives(c)
+
+
+def test_manufactured_outrage_is_excluded():
+    c = make("Polémica con los agentes de IA en atención al cliente")
+    assert "polemica" in rules(c)
+
+
+def test_rumours_are_excluded():
+    c = make("Se rumorea que la nueva IA automatizará todo el CRM")
+    assert "rumor" in rules(c)
+
+
+def test_misleading_promises_are_excluded():
+    c = make("Automatiza tu pyme y consigue ingresos pasivos garantizados")
+    assert "promesa_enganosa" in rules(c)
+
+
+def test_attacking_a_competitor_is_excluded():
+    c = make("Por qué ese CRM con IA es una estafa para autónomos")
+    assert "ataque" in rules(c)
+
+
+def test_client_data_is_excluded():
+    c = make("Cómo automatizamos el inventario", mentions_client_data=True)
+    assert "datos_de_cliente" in rules(c)
+
+
+def test_material_without_usage_rights_is_excluded():
+    c = make("Demo de un agente contestando en WhatsApp", usage_rights_ok=False)
+    assert "derechos_de_uso" in rules(c)
+
+
+def test_a_piece_unrelated_to_autenia_is_excluded():
+    """The filter that stops the feed drifting into generic news."""
+    c = make("El precio del alquiler sube en las grandes ciudades")
+    assert "sin_relacion" in rules(c)
+
+
+def test_a_candidate_without_sourced_facts_is_excluded():
+    c = make("Los agentes de IA cambian la atención al cliente", facts=())
+    assert "sin_evidencia" in rules(c)
+
+
+def test_a_clean_candidate_survives():
+    c = make(
+        "Un agente de IA contesta el 70% de las consultas de una pyme",
+        summary="Reduce el tiempo de atención al cliente en tiendas online",
+        facts=["el 70% de las consultas son repetidas", "ahorro de 4 horas semanales"],
+    )
+    assert survives(c), hard_rejections(c)
+
+
+# -- accents and word boundaries -------------------------------------------
+
+def test_exclusions_match_without_accents():
+    assert "politica" in rules(make("Polemica del Gobierno sobre la IA en pymes"))
+    assert "politica" in rules(make("Polemica del gobierno sobre la IA en pymes"))
+
+
+def test_relevance_terms_do_not_match_inside_other_words():
+    """'ia' must not fire inside 'financiera', or everything looks relevant."""
+    c = make("La consultora financiera abre nueva sede")
+    assert "sin_relacion" in rules(c)
+
+
+# -- scoring ---------------------------------------------------------------
+
+def test_fresher_beats_stale_all_else_equal():
+    fresh = make("Automatizar informes con IA en una pyme", age_days=0)
+    stale = make("Automatizar informes con IA en un taller", age_days=12)
+    assert score(fresh, now=NOW).total > score(stale, now=NOW).total
+
+
+def test_more_sourced_facts_score_higher():
+    thin = make("Agentes de IA para pymes", facts=["un dato"])
+    solid = make("Agentes de IA para autónomos",
+                 facts=["dato uno", "dato dos", "dato tres"])
+    assert score(solid, now=NOW).parts["evidencia"] > score(thin, now=NOW).parts["evidencia"]
+
+
+def test_absent_judgments_are_neutral_not_zero():
+    """A missing model judgment must not condemn a candidate."""
+    c = make("Automatizar la facturación de una pyme con IA")
+    parts = score(c, now=NOW).parts
+    assert parts["dolor"] == 0.5
+    assert parts["hook"] == 0.5
+
+
+def test_rank_drops_rejected_candidates_entirely():
+    good = make("Automatizar informes en una pyme con un agente de IA")
+    bad = make("El Gobierno debate la nueva ley")
+    ranked = rank([bad, good], now=NOW)
+    assert [c.title for c, _ in ranked] == [good.title]
+
+
+# -- the blank day ---------------------------------------------------------
+
+def test_pick_returns_none_when_nothing_clears_the_bar():
+    """A blank day is a valid outcome. Nothing here may invent a fallback."""
+    weak = make("Automatizar algo con IA", age_days=13, facts=["un dato"])
+    judgments = {weak.url: {"dolor": 0.0, "hook": 0.0, "visual": 0.0, "conversion": 0.0}}
+    assert pick([weak], judgments=judgments, now=NOW) is None
+
+
+def test_pick_returns_none_when_every_candidate_was_rejected():
+    assert pick([make("El Gobierno aprueba la ley")], now=NOW) is None
+
+
+def test_pick_returns_the_best_survivor():
+    strong = make(
+        "Un agente de IA contesta las consultas repetidas de una pyme",
+        summary="automatizacion de atencion al cliente con integracion al CRM",
+        facts=["70% de consultas repetidas", "4 horas semanales", "sin ampliar plantilla"],
+    )
+    weaker = make("La IA llega a las pymes", facts=["un dato"], age_days=9)
+    judgments = {strong.url: {"dolor": 0.9, "hook": 0.9, "visual": 0.8, "conversion": 0.8}}
+
+    chosen = pick([weaker, strong], judgments=judgments, now=NOW)
+
+    assert chosen is not None
+    candidate, result = chosen
+    assert candidate.title == strong.title
+    assert result.total >= MIN_SCORE
+
+
+# -- deduplication ---------------------------------------------------------
+
+def test_the_same_story_republished_hashes_the_same():
+    original = make("Agentes de IA para pymes", url="https://a.example/1")
+    reprint = make("Agentes de IA para pymes", url="https://b.example/2")
+    assert original.topic_hash == reprint.topic_hash
+
+
+def test_word_order_does_not_change_the_topic_hash():
+    a = make("Automatizar informes con IA")
+    b = make("Con IA automatizar informes")
+    assert a.topic_hash == b.topic_hash
+
+
+def test_different_stories_hash_differently():
+    a = make("Agentes de IA para pymes")
+    b = make("Cuadros de mando en tiempo real para pymes")
+    assert a.topic_hash != b.topic_hash
+
+
+# -- relevance vocabulary (2026-07-30) ------------------------------------
+
+@pytest.mark.parametrize("headline", [
+    "El 76% de las empresas reconoce que la carga administrativa les resta tiempo",
+    "Las pymes españolas dedican 12 horas semanales al papeleo",
+    "La burocracia se come el 4% de la facturación de los autónomos",
+    "Un estudio cifra en 8.000 millones el coste de los trámites para las empresas",
+    "El absentismo laboral cierra el año en máximos históricos",
+    "La morosidad alarga los plazos de pago a 82 días de media",
+])
+def test_a_problem_shaped_headline_is_relevant(headline):
+    """The filter must recognise the pain, not only the product.
+
+    Until 2026-07-30 RELEVANCE listed only technology (crm, erp, api, chatbot),
+    so a real outlet reporting a real figure about administrative burden was
+    rejected as "no toca ningún servicio de Autenia" while two vendors'
+    e-invoicing guides passed on the word "facturación". A manager suffers
+    paperwork; nobody suffers an absent CRM.
+    """
+    assert "sin_relacion" not in rules(make(headline, facts=["76% de las empresas"]))
+
+
+def test_something_unrelated_is_still_rejected():
+    """Widening the vocabulary must not turn the filter off."""
+    assert "sin_relacion" in rules(
+        make("El Barcelona ficha a un delantero por 40 millones",
+             facts=["40 millones de euros"]))
+
+
+# -- freshness follows the window (2026-07-30) ----------------------------
+
+def test_freshness_reaches_zero_only_at_the_edge_of_the_window():
+    """The curve and the collector's window must be the same number.
+
+    They were two constants; widening the window to 30 days left this fading to
+    zero at 14, so everything from the older fortnight was admitted and then
+    scored as worthless — the worst of both rules.
+    """
+    assert _freshness(0) == 1.0
+    assert _freshness(MAX_AGE_DAYS) == 0.0
+    midpoint = _freshness(MAX_AGE_DAYS / 2)
+    assert 0.3 < midpoint < 0.7, "a story from mid-window is neither fresh nor dead"
+
+
+def test_the_collector_and_the_score_share_one_window():
+    from autenia import sources
+    assert sources.MAX_AGE_DAYS == MAX_AGE_DAYS
+
+
+# -- AI as the favoured subject (2026-07-30) ------------------------------
+
+def test_an_ai_story_outscores_an_equivalent_one_without_ai():
+    """Juan's call: this channel should be where people hear about AI."""
+    ia = make("Los agentes de inteligencia artificial ya atienden clientes en pymes",
+              summary="Datos de adopción de IA en atención al cliente.",
+              facts=["el 30% de las pymes ya usa algún agente", "ahorro de 6 horas"])
+    sin_ia = make("Las pymes dedican demasiado tiempo a tareas administrativas",
+                  summary="Datos de carga administrativa.",
+                  facts=["el 30% del tiempo se va en administración", "6 horas semanales"])
+    assert score(ia).total > score(sin_ia).total
+
+
+def test_a_story_about_the_pain_is_still_publishable():
+    """The floor exists so favouring AI does not silently ban everything else.
+
+    What Autenia sells against is administrative drag; a good piece about it
+    must still be able to clear the bar on a day with no AI news.
+    """
+    from autenia.editorial import subject_score
+    sin_ia = make("La burocracia se come el 4% de la facturación de los autónomos",
+                  facts=["4% de la facturación", "12 horas al mes"])
+    assert subject_score(sin_ia) >= 0.35
+    assert score(sin_ia, judgments={"dolor": 0.9, "hook": 0.8,
+                                    "visual": 0.7, "conversion": 0.8}).total >= MIN_SCORE
+
+
+def test_ai_in_the_headline_counts_for_more_than_ai_in_passing():
+    """A story *about* AI says so in its title; a mention is not a subject."""
+    from autenia.editorial import subject_score
+    titular = make("ChatGPT ya redacta las facturas de estas empresas",
+                   summary="Un repaso al uso de la herramienta.")
+    de_pasada = make("Las empresas buscan ahorrar tiempo",
+                     summary="Algunas usan ChatGPT para ello.")
+    assert subject_score(titular) > subject_score(de_pasada)
+
+
+def test_a_product_launch_is_pulled_back_down():
+    """The 2026-07-29 problem must not return through the new front door.
+
+    Favouring AI as a subject would otherwise favour exactly the pile of vendor
+    launch write-ups that scored near zero for good reason.
+    """
+    from autenia.editorial import subject_score
+    noticia = make("La inteligencia artificial ya redacta contratos en las asesorías",
+                   facts=["el 40% de las asesorías lo usa"])
+    anuncio = make("Oracle lanza su nueva versión con inteligencia artificial",
+                   summary="Ya disponible. Precios y planes en su web.",
+                   facts=["disponible desde hoy"])
+    assert subject_score(anuncio) < subject_score(noticia)
+
+
+def test_the_weights_still_sum_to_one():
+    """MIN_SCORE only means something if the scale does not drift."""
+    from autenia.editorial import WEIGHTS
+    assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+
+
+def test_every_weighted_signal_is_actually_produced():
+    """A weight naming a part that score() never fills is silently ignored."""
+    from autenia.editorial import WEIGHTS
+    parts = score(make("Una noticia de inteligencia artificial")).parts
+    assert set(WEIGHTS) == set(parts)

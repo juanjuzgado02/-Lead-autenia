@@ -31,9 +31,18 @@ USER autenia
 
 # The database, rendered videos and the footage library all live on a mounted
 # volume, so restarting the container never loses a script awaiting review.
+#
+# The two caches belong here for a harder reason than convenience: their
+# defaults are *relative* ("data/cache/clips"), so unpinned they resolve against
+# WORKDIR into /app/data — the container's own writable layer, which is not the
+# volume and does not survive a rebuild. Every `docker compose up --build` would
+# then throw away footage that was paid for and buy it again, at about 0,40 € a
+# clip and up to six a video. The cheapest line in this file.
 ENV AUTENIA_DB_PATH=/data/autenia.db \
     AUTENIA_WORK_DIR=/data/videos \
     AUTENIA_LIBRARY_DIR=/data/library \
+    AUTENIA_CLIP_CACHE=/data/cache/clips \
+    AUTENIA_IMAGE_CACHE=/data/cache/images \
     PYTHONUNBUFFERED=1
 
 # Says whether the configuration resolves and the binaries are there, without

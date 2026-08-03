@@ -32,6 +32,39 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
+#: Puerto de loopback que se queda cogido mientras el bot escucha. No sirve
+#: para hablar con él —nadie se conecta ahí, ni podría desde fuera de esta
+#: máquina—: sirve para que el segundo arranque encuentre la puerta cogida.
+#:
+#: Dos bots con el mismo token se roban las actualizaciones entre sí. Telegram
+#: entrega cada una a **un solo** ``getUpdates``, así que con dos procesos la
+#: mitad de las pulsaciones se las lleva el que no toca y no pasa nada visible.
+#: Pasó el 2 de agosto de 2026 y costó una hora entenderlo, porque por fuera se
+#: ve como un bot que "a veces necesita que le des tres veces".
+#:
+#: Un socket y no un fichero de bloqueo porque el sistema lo suelta solo cuando
+#: el proceso muere: un fichero sobrevive a un corte de luz y deja al bot sin
+#: arrancar por un candado que ya no guarda nada.
+CERROJO_PUERTO = 47821
+
+_cerrojo = None
+
+
+def tomar_cerrojo() -> bool:
+    """Coger el sitio del bot, o decir que ya está cogido."""
+    global _cerrojo  # noqa: PLW0603 - vive lo que vive el proceso
+    import socket  # noqa: PLC0415
+
+    intento = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        intento.bind(("127.0.0.1", CERROJO_PUERTO))
+    except OSError:
+        intento.close()
+        return False
+    _cerrojo = intento          # se suelta cuando termina el proceso
+    return True
+
+
 async def run_cycle_once() -> None:
     await store.init_db()
     result = await cycle.run_cycle()
@@ -125,6 +158,15 @@ async def main() -> int:
     if command == "voces":
         await audition_voices(provider=sys.argv[2] if len(sys.argv) > 2 else None)
         return 0
+    # Antes de gastar un céntimo: si ya hay un bot escuchando, este sobra y
+    # además estorba, porque los dos se repartirían las pulsaciones al azar.
+    if command in ("listen", "both") and not tomar_cerrojo():
+        print("Ya hay un bot de Autenia escuchando en esta máquina.\n"
+              "Dos a la vez se roban las pulsaciones entre sí, así que este no "
+              "arranca.\n"
+              "Cierra la otra ventana si quieres arrancar de cero.")
+        return 1
+
     if command in ("cycle", "both"):
         await run_cycle_once()
     if command in ("listen", "both"):

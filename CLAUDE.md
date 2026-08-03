@@ -106,7 +106,7 @@ packages. The container installs them; a host run needs `apt install ffmpeg` or
 | `autenia/arreglo.py` | Which layer a reported defect belongs to, and buying only that one. |
 | `autenia/formats.py` | How it is cut — cadence, captions, camera. Data, not code. |
 | `autenia/clips.py` | Generated footage, 8 s a piece, cached and reused by meaning. |
-| `autenia/assets.py` | Autenia's own footage library and coverage measurement. |
+| `autenia/assets.py` | Autenia's own footage library, what the operator sends into it, and coverage measurement. |
 | `autenia/images.py` | Generated scene photographs, cached on disk. ~0,03 € each. |
 | `autenia/publish.py` | Upload-Post, per network, dry-run by default. |
 | `autenia/ffmpeg.py` | Encoder selection and −14 LUFS loudness normalisation. |
@@ -206,6 +206,9 @@ key the browser holds.
 - `AUTENIA_VOICE_PROVIDER`, `AUTENIA_VOICE_NAME` (`Iapetus`), `AUTENIA_TZ`
   (`Europe/Madrid`), `AUTENIA_DB_PATH`, `AUTENIA_WORK_DIR`,
   `AUTENIA_LIBRARY_DIR`, `AUTENIA_IMAGE_CACHE`, `AUTENIA_CLIP_CACHE`
+- `AUTENIA_SUBTITULOS` (on) — off takes the captions off any of the five
+  montages. A caption that runs ahead of what is being said is worse than none,
+  so this is an escape hatch, not a preference
 - `AUTENIA_REVISION_VOZ` (on), `AUTENIA_INTENTOS_VOZ` (3) — whether the take is
   listened to before it is cut, and how many are bought before the least bad one
   is kept. Off is for a montage test, where the words do not matter

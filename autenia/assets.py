@@ -144,6 +144,63 @@ def load_library(directory: str) -> list[Asset]:
     return assets
 
 
+def add_to_library(source: str, directory: str, *, description: str = "",
+                   name: str = "") -> str:
+    """Meter un fichero en la biblioteca con lo que hace falta para encontrarlo.
+
+    Un fichero suelto en la carpeta ya se empareja por su nombre, pero lo que
+    llega de Telegram se llama ``file_12.jpg``, que no significa nada para
+    nadie. Así que la descripción se guarda en el ``library.json`` de al lado,
+    que es el mecanismo que ya existía para el metraje cuyo nombre no da para
+    tanto.
+
+    El nombre en disco sale de la descripción, no de un identificador: una
+    biblioteca que se puede leer con ``ls`` es una que alguien puede ordenar a
+    mano el día que haga falta.
+    """
+    os.makedirs(directory, exist_ok=True)
+    extension = os.path.splitext(source)[1].lower() or ".jpg"
+    base = _slug(name or description) or "material"
+
+    destino = os.path.join(directory, f"{base}{extension}")
+    repeticion = 2
+    while os.path.exists(destino):
+        destino = os.path.join(directory, f"{base}-{repeticion}{extension}")
+        repeticion += 1
+
+    with open(source, "rb") as entrada, open(destino, "wb") as salida:
+        salida.write(entrada.read())
+
+    if description:
+        _remember(directory, os.path.basename(destino), description)
+    return destino
+
+
+def _slug(text: str) -> str:
+    """Un nombre de fichero legible a partir de una frase."""
+    limpio = _normalise(text)
+    palabras = [p for p in limpio.split() if p and p not in STOPWORDS]
+    return "-".join(palabras[:6])
+
+
+def _remember(directory: str, filename: str, description: str) -> None:
+    """Anotar la descripción en el sidecar, sin perder lo que ya había."""
+    sidecar = os.path.join(directory, "library.json")
+    fichas: dict = {}
+    if os.path.isfile(sidecar):
+        try:
+            with open(sidecar, encoding="utf-8") as handle:
+                fichas = json.load(handle)
+        except (json.JSONDecodeError, OSError):
+            fichas = {}
+
+    fichas[filename] = {"description": description}
+    parcial = f"{sidecar}.part"
+    with open(parcial, "w", encoding="utf-8") as handle:
+        json.dump(fichas, handle, ensure_ascii=False, indent=2)
+    os.replace(parcial, sidecar)
+
+
 def match(request: str, library: list[Asset], *,
           exclude: set[str] | None = None) -> Match | None:
     """The best shot for a scene, or None when nothing fits well enough.

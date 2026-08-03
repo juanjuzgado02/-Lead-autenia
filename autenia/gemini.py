@@ -430,6 +430,54 @@ def narration_text(script: dict) -> str:
     return " ".join(piece.strip() for piece in pieces if piece and piece.strip())
 
 
+#: Lo que se le pide a una imagen que llega sin explicación. Corto a propósito:
+#: la descripción se usa para emparejarla con la escena que la pide, y ahí sólo
+#: cuentan los sustantivos —"panel", "whatsapp", "factura"—. Un párrafo bonito
+#: mete palabras de relleno que emparejan con todo y por tanto con nada.
+_DESCRIBIR = (
+    "Describe qué se ve en esta imagen en una sola frase corta en español, "
+    "para poder encontrarla después. Nombra lo concreto: qué aplicación o "
+    "documento se ve, qué se está haciendo, qué objetos hay. Sin adjetivos de "
+    "estilo, sin opinión y sin decir «la imagen muestra». Máximo doce palabras."
+)
+
+
+async def describe_image(path: str) -> str:
+    """Qué se ve en una imagen, en una frase. Cadena vacía si no se pudo mirar.
+
+    Sirve para lo que manda el operador por Telegram, que llega llamándose
+    ``file_12.jpg``: sin una descripción, el emparejamiento por significado no
+    tiene nada con lo que trabajar y la captura no sale en ningún vídeo.
+
+    Nunca lanza. Una imagen sin describir sigue estando en la biblioteca y
+    todavía se puede emparejar por su nombre, así que un fallo aquí es peor
+    material, no menos material.
+    """
+    try:
+        with open(path, "rb") as handle:
+            datos = base64.b64encode(handle.read()).decode()
+    except OSError:
+        return ""
+
+    mime = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+    try:
+        payload = await request(
+            f"models/{TEXT_MODEL}:generateContent",
+            {
+                "contents": [{"parts": [
+                    {"text": _DESCRIBIR},
+                    {"inlineData": {"mimeType": mime, "data": datos}},
+                ]}],
+                "generationConfig": {"temperature": 0.0},
+            },
+            timeout=120.0,
+        )
+        return " ".join(_first_text(payload).split())[:200]
+    except (GeminiError, KeyError, IndexError, TypeError, ValueError) as exc:
+        print(f"[assets] no se pudo describir la imagen: {str(exc)[:120]}")
+        return ""
+
+
 # --------------------------------------------------------------------------
 # Speech
 # --------------------------------------------------------------------------

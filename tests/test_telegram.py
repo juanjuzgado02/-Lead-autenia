@@ -99,9 +99,62 @@ def test_an_empty_message_is_ignored():
     assert parse_update(message("   "), awaiting={"v1"}) is None
 
 
-def test_a_photo_without_text_is_ignored():
-    update = {"message": {"chat": {"id": int(AUTHORISED)}, "photo": [{"file_id": "x"}]}}
-    assert parse_update(update, awaiting={"v1"}) is None
+def test_a_photo_is_material_not_noise():
+    """`data/library` sólo se llena así sin entrar en el servidor.
+
+    Y llenarla importa más de lo que parece: a un modelo de imagen no se le
+    puede pedir la interfaz de Autenia —se la inventa, y tiene prohibido
+    dibujar letras porque le salen ilegibles—, así que una captura de verdad es
+    la única forma de enseñar el producto.
+    """
+    update = {"message": {"chat": {"id": int(AUTHORISED)},
+                          "photo": [{"file_id": "peque"}, {"file_id": "grande"}]}}
+    action = parse_update(update, awaiting={"v1"})
+    assert action.kind == "imagen"
+    assert action.file_id == "grande"   # Telegram las manda de menor a mayor
+
+
+def test_a_photo_does_not_become_feedback_on_a_waiting_script():
+    """Con un guion en revisión, una captura sigue siendo una captura."""
+    update = {"message": {"chat": {"id": int(AUTHORISED)},
+                          "photo": [{"file_id": "x"}], "caption": "el panel"}}
+    action = parse_update(update, awaiting={"v1"})
+    assert action.kind == "imagen" and action.version_id is None
+    assert action.text == "el panel"
+
+
+def test_a_screenshot_sent_as_a_file_keeps_its_quality():
+    """Comprimida, Telegram se come el texto fino, que es lo que vale de una
+    captura. Mandarla como fichero es la forma buena y también cuenta."""
+    update = {"message": {"chat": {"id": int(AUTHORISED)}, "document": {
+        "file_id": "doc1", "file_name": "panel-facturas.png",
+        "mime_type": "image/png"}}}
+    action = parse_update(update, awaiting=set())
+    assert action.kind == "imagen"
+    assert action.file_name == "panel-facturas.png"
+
+
+def test_a_pdf_is_not_a_screenshot():
+    update = {"message": {"chat": {"id": int(AUTHORISED)}, "document": {
+        "file_id": "d", "file_name": "informe.pdf",
+        "mime_type": "application/pdf"}}}
+    assert parse_update(update, awaiting=set()) is None
+
+
+def test_a_photo_from_any_other_chat_is_ignored():
+    update = {"message": {"chat": {"id": int(STRANGER)},
+                          "photo": [{"file_id": "x"}]}}
+    assert parse_update(update, awaiting=set()) is None
+
+
+def test_a_photo_can_carry_the_brief_that_uses_it():
+    """Mandar la captura y el tema en el mismo gesto, que es como se usa el móvil."""
+    update = {"message": {"chat": {"id": int(AUTHORISED)},
+                          "photo": [{"file_id": "x"}],
+                          "caption": "/guion el panel de facturas"}}
+    action = parse_update(update, awaiting=set())
+    assert action.kind == "imagen"
+    assert telegram.brief_of(action.text) == "el panel de facturas"
 
 
 def test_an_edited_message_still_counts_as_feedback():

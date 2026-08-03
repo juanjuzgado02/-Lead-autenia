@@ -136,6 +136,7 @@ async def handle(action: telegram.Action) -> None:
         "publicar": _publish_video,
         "descartar": _discard_video,
         "defectuoso": _ask_for_defect,
+        "imagen": _on_image,
         "ocioso": _idle_text,
     }
     handler = handlers.get(action.kind)
@@ -238,6 +239,59 @@ async def _feedback(action: telegram.Action) -> None:
         await _repair_video(action)
         return
     await _rewrite(action.version_id, feedback=action.text)
+
+
+async def _on_image(action: telegram.Action) -> None:
+    """Una foto que manda el operador entra en la biblioteca de Autenia.
+
+    Es la única forma de llenar `data/library` sin entrar en el servidor, y esa
+    carpeta es la diferencia entre un vídeo con material propio y uno hecho
+    entero con imagen generada. Importa más de lo que parece: a un modelo de
+    imagen no se le puede pedir "el panel de Autenia" —se lo inventa, y los
+    prompts le prohíben expresamente dibujar letras porque le salen ilegibles—,
+    así que **la interfaz del producto es justo lo que no se puede generar**.
+    Una captura de verdad es la única manera de enseñarla.
+
+    Se queda para siempre, no para este vídeo: la biblioteca se empareja por
+    significado, así que una captura del panel de facturas sale sola el día que
+    un guion hable de facturas.
+
+    El pie de la foto es su descripción, y si además pide un guion, se escribe:
+    mandar la captura y el tema en el mismo gesto es como se usa esto desde el
+    móvil.
+    """
+    pie = (action.text or "").strip()
+    tema = telegram.brief_of(pie) if pie else None
+    # Lo que describe la foto es el pie sin la orden: "/guion facturas" pide un
+    # guion sobre facturas y describe una captura de facturas, las dos cosas.
+    descripcion = tema if tema else pie
+
+    carpeta = os.path.join(WORK_ROOT, "_entrantes")
+    try:
+        descargada = await telegram.download_file(action.file_id, carpeta)
+    except telegram.TelegramError as exc:
+        await telegram.send_message(f"❌ No he podido descargar la imagen: {exc}")
+        return
+
+    if not descripcion:
+        # Sin pie, se la describe un modelo: sin descripción no la encuentra
+        # ninguna escena y la captura no sirve de nada.
+        descripcion = await gemini.describe_image(descargada)
+
+    guardada = asset_lib.add_to_library(
+        descargada, LIBRARY_DIR, description=descripcion,
+        name=action.file_name or descripcion)
+    os.remove(descargada)
+
+    total = len(asset_lib.load_library(LIBRARY_DIR))
+    await telegram.send_message(
+        f"🖼 <b>Guardada en la biblioteca.</b> "
+        f"«{telegram.escape(descripcion or os.path.basename(guardada))}»\n"
+        f"<i>Ya son {total} en total. Se usará sola en cuanto un guion pida "
+        f"algo así — y en los de después también.</i>")
+
+    if tema:
+        await _on_request(action)
 
 
 async def _idle_text(action: telegram.Action) -> None:

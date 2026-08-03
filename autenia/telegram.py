@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -46,10 +47,12 @@ class Action:
 
     kind: str          # "aprobar" | "cambios" | "rechazar" | "regenerar" |
                        # "texto" | "tema" | "publicar" | "descartar" |
-                       # "defectuoso" | "ocioso"
+                       # "defectuoso" | "ocioso" | "imagen"
     version_id: str | None
     text: str = ""
     callback_id: str | None = None
+    file_id: str | None = None     # una foto que manda el operador
+    file_name: str = ""            # cómo la llamaba su fichero, si lo traía
 
 
 #: How the operator asks for a script about something they choose, instead of
@@ -325,6 +328,49 @@ async def clear_keyboard(chat_id, message_id) -> None:
 # Receiving decisions
 # --------------------------------------------------------------------------
 
+#: Lo que Telegram considera una imagen cuando se manda como fichero.
+IMAGE_MIME = ("image/png", "image/jpeg", "image/jpg", "image/webp")
+
+
+def _photo_of(message: dict) -> tuple[str, str] | None:
+    """``(file_id, nombre)`` de la imagen de un mensaje, si la trae.
+
+    Dos formas de mandar la misma captura, y las dos cuentan: ``photo`` es la
+    que comprime Telegram —de la que se coge **la mayor**, que es la última— y
+    ``document`` es la que llega sin tocar cuando se envía como fichero. La
+    segunda es la buena para una captura de pantalla, donde la compresión se
+    come justo el texto fino que hace que la captura valga para algo.
+    """
+    fotos = message.get("photo") or []
+    if fotos:
+        return fotos[-1].get("file_id", ""), ""
+
+    documento = message.get("document") or {}
+    if documento.get("mime_type", "").lower() in IMAGE_MIME:
+        return documento.get("file_id", ""), documento.get("file_name", "")
+    return None
+
+
+async def download_file(file_id: str, dest_dir: str) -> str:
+    """Traerse un fichero de Telegram al disco. Devuelve dónde ha quedado."""
+    info = await _call("getFile", {"file_id": file_id})
+    remoto = (info or {}).get("file_path")
+    if not remoto:
+        raise TelegramError("getFile no devolvió la ruta del fichero")
+
+    os.makedirs(dest_dir, exist_ok=True)
+    destino = os.path.join(dest_dir, os.path.basename(remoto))
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        # El token va en la URL de descarga; nunca en un mensaje ni en un log.
+        response = await client.get(
+            f"{API}/file/bot{autenia.telegram_bot_token}/{remoto}")
+    if response.status_code != 200:
+        raise TelegramError(f"la descarga devolvió {response.status_code}")
+    with open(destino, "wb") as handle:
+        handle.write(response.content)
+    return destino
+
+
 def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | None:
     """Turn one raw update into an attributed Action, or None to ignore it.
 
@@ -356,6 +402,16 @@ def parse_update(update: dict, *, awaiting: set[str] | None = None) -> Action | 
         return None
     if not _authorised(message.get("chat", {}).get("id")):
         return None
+
+    # Una foto es material de Autenia. Es la única forma de que la biblioteca
+    # se llene sin entrar en el servidor, y la biblioteca es lo que separa un
+    # vídeo con material propio de uno hecho entero con imagen generada — que
+    # es lo que hay mientras `data/library` esté vacía.
+    foto = _photo_of(message)
+    if foto:
+        return Action(kind="imagen", version_id=None,
+                      text=(message.get("caption") or "").strip(),
+                      file_id=foto[0], file_name=foto[1])
 
     text = (message.get("text") or "").strip()
     if not text:

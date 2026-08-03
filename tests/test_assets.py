@@ -6,9 +6,11 @@ about *refusing* rather than matching.
 """
 
 import json
+import os
 
 import pytest
 
+from autenia import assets
 from autenia.assets import (
     MIN_MATCH, Asset, coverage, keywords, load_library, match, plan_visuals,
 )
@@ -179,3 +181,69 @@ def test_videos_and_images_are_distinguished(tmp_path):
 
     assert library["clip.mp4"].is_video
     assert not library["captura.png"].is_video
+
+
+# -- lo que manda el operador ----------------------------------------------
+#
+# Una captura que llega por Telegram se llama "file_12.jpg". Sin descripción no
+# la encuentra ninguna escena, así que entra en la biblioteca y no la usa nadie:
+# el material propio se queda en 0% con la carpeta llena.
+
+def test_a_sent_file_becomes_findable_material(tmp_path):
+    origen = tmp_path / "file_12.jpg"
+    origen.write_bytes(b"unos bytes")
+
+    biblioteca = tmp_path / "library"
+    guardada = assets.add_to_library(
+        str(origen), str(biblioteca),
+        description="panel de facturas de Autenia con los pedidos del mes")
+
+    cargada = assets.load_library(str(biblioteca))
+    assert len(cargada) == 1
+    assert "facturas" in cargada[0].terms
+    assert os.path.basename(guardada) != "file_12.jpg"  # el nombre dice algo
+
+
+def test_a_sent_file_is_matched_by_a_scene_that_asks_for_it(tmp_path):
+    """La prueba de verdad: que salga sola cuando un guion hable de eso."""
+    origen = tmp_path / "x.png"
+    origen.write_bytes(b"0")
+    biblioteca = tmp_path / "library"
+    assets.add_to_library(str(origen), str(biblioteca),
+                          description="panel de facturas de Autenia")
+
+    cargada = assets.load_library(str(biblioteca))
+    plan = assets.plan_visuals(["Captura del panel de facturas"], cargada)
+    assert plan[0] is not None
+    assert assets.coverage(plan) == 1.0
+
+
+def test_two_files_with_the_same_description_do_not_overwrite(tmp_path):
+    biblioteca = tmp_path / "library"
+    for _ in range(2):
+        origen = tmp_path / "y.jpg"
+        origen.write_bytes(b"0")
+        assets.add_to_library(str(origen), str(biblioteca),
+                              description="panel de facturas")
+    assert len(assets.load_library(str(biblioteca))) == 2
+
+
+def test_the_sidecar_keeps_what_was_already_there(tmp_path):
+    biblioteca = tmp_path / "library"
+    for texto in ("panel de facturas", "agente de whatsapp contestando"):
+        origen = tmp_path / "z.jpg"
+        origen.write_bytes(b"0")
+        assets.add_to_library(str(origen), str(biblioteca), description=texto)
+
+    descripciones = {a.description for a in assets.load_library(str(biblioteca))}
+    assert descripciones == {"panel de facturas",
+                             "agente de whatsapp contestando"}
+
+
+def test_a_file_with_no_description_is_still_kept(tmp_path):
+    """Sin describir se empareja peor, pero perderla sería peor todavía."""
+    origen = tmp_path / "w.jpg"
+    origen.write_bytes(b"0")
+    biblioteca = tmp_path / "library"
+    assets.add_to_library(str(origen), str(biblioteca), description="")
+    assert len(assets.load_library(str(biblioteca))) == 1
